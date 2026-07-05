@@ -100,7 +100,11 @@ export async function fetchNearbySafeZones(lat, lng) {
  *   40% ระยะทาง (ใกล้กว่า = คะแนนสูงกว่า)
  *   35% ความจุที่เหลือ (คนน้อยกว่า = คะแนนสูงกว่า → ช่วยกระจายคนไม่ให้กองจุดเดียว)
  *   15% ประเภทสถานที่ (สนามโล่ง/สวน คะแนนสูงกว่าลานจอดรถ)
- *   10% เส้นทางปลอดภัย (ตอนนี้ตั้งเป็นค่าคงที่ — ต่อยอดได้ด้วยข้อมูล crowdsource ถนนพัง)
+ *   10% เส้นทางปลอดภัย (ตอนนี้เป็นค่าคงที่ — ต่อยอดได้ด้วยข้อมูล crowdsource ถนนพัง)
+ *
+ * นอกจาก score (ใช้จัดอันดับ) ยังคำนวณ safetyPercent (0-100) ไว้ "แสดงผล" ให้ผู้ใช้เห็น
+ * ว่าจุดนี้ปลอดภัยแค่ไหน โดยเน้นประเภทสถานที่ + ความจุที่เหลือ (ไม่รวมระยะทาง เพราะระยะทาง
+ * ไม่ใช่ตัวชี้วัดความปลอดภัยของสถานที่นั้นเอง)
  */
 export function scoreZones(zones, maxRadiusKm = 5) {
   return zones
@@ -117,7 +121,11 @@ export function scoreZones(zones, maxRadiusKm = 5) {
         0.15 * z.typeScore +
         0.1 * routeSafetyScore;
 
-      return { ...z, occupancyRatio, score };
+      // คะแนนความปลอดภัยที่แสดงผล: เน้นประเภทสถานที่ (60%) + ความจุที่ยังว่าง (40%)
+      const safetyPercent = Math.round((z.typeScore * 0.6 + capacityScore * 0.4) * 100);
+      const capacityRemaining = Math.max(0, z.capacity - z.currentCount);
+
+      return { ...z, occupancyRatio, score, safetyPercent, capacityRemaining };
     })
     .sort((a, b) => b.score - a.score);
 }

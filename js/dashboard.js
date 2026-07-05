@@ -1,18 +1,19 @@
 // ============================================================================
-// dashboard.js — หน้า Dashboard สำหรับหน่วยกู้ภัย/ผู้ดูแลระบบ (ไม่ต้องล็อกอิน)
-// แสดงแผนที่ + สถิติ real-time ของ SOS, จุดปลอดภัย, คำขอ/เช็คอิน
+// dashboard.js — หน้า Dashboard สาธารณะ (ใครก็เข้าดูได้ ไม่ต้องล็อกอิน)
+//
+// ตั้งใจ "ไม่แสดง" ชื่อและเบอร์โทรของผู้ใช้เด็ดขาด — อ่านข้อมูลจากคอลเลกชัน
+// public_pins และ zone_state เท่านั้น ซึ่งทั้งสองไม่มีข้อมูลส่วนบุคคลติดอยู่เลย
+// (ข้อมูลที่มีชื่อ/เบอร์โทร เช่น sos_alerts, safe_requests, status_reports
+//  ถูกจำกัดด้วย Firestore Rules ให้อ่านได้เฉพาะ Admin/หน่วยกู้ภัยที่ล็อกอินแล้วเท่านั้น
+//  ดูหน้า admin.html)
 // ============================================================================
 
 import { FALLBACK_LOCATION } from "./utils.js";
-import {
-  db, collection, onSnapshot, query, where, orderBy, doc, updateDoc, serverTimestamp
-} from "./config.js";
+import { db, collection, onSnapshot } from "./config.js";
 
 let map;
-const sosMarkers = new Map();
+const pinMarkers = new Map();
 const zoneMarkers = new Map();
-let totalRequests = 0;
-let totalCheckins = 0;
 
 function initMap() {
   map = L.map("map").setView([FALLBACK_LOCATION.lat, FALLBACK_LOCATION.lng], 12);
@@ -22,141 +23,89 @@ function initMap() {
   }).addTo(map);
 }
 
-function statusColorClass(status) {
-  return status; // ใช้ชื่อ status ตรงกับ class ใน CSS (.sos-pin.trapped ฯลฯ)
-}
-
-function statusLabel(status) {
-  const map = {
-    trapped: "ติดอยู่ ออกไม่ได้",
-    injured_severe: "บาดเจ็บ เดินไม่ได้",
-    injured_minor: "บาดเจ็บเล็กน้อย",
-    helping: "กำลังช่วยผู้อื่น"
-  };
+function statusLabel(kind, status) {
+  if (kind === "sos") {
+    return status === "resolved" ? "ช่วยเหลือสำเร็จแล้ว" : "🆘 ต้องการความช่วยเหลือด่วน";
+  }
+  if (kind === "checkin") return "✅ ปลอดภัย (เช็คอินที่จุดปลอดภัย)";
+  const map = { safe: "✅ ปลอดภัยดี", unsafe: "⚠️ ไม่ปลอดภัย/ต้องการความช่วยเหลือ", unknown: "❓ ไม่แน่ใจ/กำลังประเมิน" };
   return map[status] || status;
 }
 
-// -------------------------------------------------------- ฟัง SOS แบบเรียลไทม์
-function watchSOS() {
-  // หมายเหตุ: ตั้งใจไม่ใช้ orderBy() ร่วมกับ where() ในคำสั่งเดียวกัน
-  // เพราะ Firestore จะต้องการ "Composite Index" ที่ยังไม่ถูกสร้างไว้ล่วงหน้า
-  // จึงดึงข้อมูลมาทั้งหมดที่ resolved == false แล้วมาเรียงลำดับเองฝั่ง client แทน
-  const q = query(collection(db, "sos_alerts"), where("resolved", "==", false));
+function pinClass(kind, status) {
+  if (kind === "sos") return status === "resolved" ? "helping" : "trapped";
+  if (kind === "checkin") return "helping"; // สีน้ำเงิน = ปลอดภัย/อยู่ในจุดที่กำหนด
+  const map = { safe: "helping", unsafe: "trapped", unknown: "injured_minor" };
+  return map[status] || "injured_minor";
+}
 
+// -------------------------------------------------------- ฟังจุดสาธารณะ (ไม่มีชื่อ/เบอร์)
+function watchPublicPins() {
   onSnapshot(
-    q,
+    collection(db, "public_pins"),
     (snap) => {
-      const list = document.getElementById("sos-list");
-      list.innerHTML = "";
-      let count = 0;
+      let safeCount = 0;
+      let unsafeCount = 0;
+      let sosPending = 0;
       const currentIds = new Set();
 
-      // เรียงเอกสารจากใหม่ไปเก่า (ใหม่สุดอยู่บนสุด) ด้วย createdAt
-      const docs = snap.docs.slice().sort((a, b) => {
-        const ta = a.data().createdAt?.toMillis?.() ?? 0;
-        const tb = b.data().createdAt?.toMillis?.() ?? 0;
-        return tb - ta;
-      });
-
-      docs.forEach((docSnap) => {
+      snap.forEach((docSnap) => {
         const d = docSnap.data();
         const id = docSnap.id;
         currentIds.add(id);
-        count++;
 
-      // --- marker บนแผนที่ ---
-      if (!sosMarkers.has(id)) {
-        const marker = L.marker([d.lat, d.lng], {
-          icon: L.divIcon({
-            className: "",
-            html: `<div class="sos-pin ${d.status}">🆘</div>`,
-            iconSize: [28, 28]
-          })
-        }).addTo(map);
-        sosMarkers.set(id, marker);
-      }
-      sosMarkers.get(id).bindPopup(
-        `<b>${d.userName || "ไม่ระบุชื่อ"}</b><br>${statusLabel(d.status)}<br>แบต ${d.battery ?? "ไม่ทราบ"}%` +
-        (d.userPhone ? `<br>โทร ${d.userPhone}` : "")
-      );
+        // --- นับสถิติ (ไม่แตะข้อมูลชื่อ/เบอร์ เพราะ collection นี้ไม่มีข้อมูลนั้นอยู่แล้ว) ---
+        if (d.kind === "sos" && !d.resolved) sosPending++;
+        if (d.kind === "checkin") safeCount++;
+        if (d.kind === "report" && d.status === "safe") safeCount++;
+        if (d.kind === "report" && d.status === "unsafe") unsafeCount++;
 
-      // --- รายการในแผงด้านข้าง ---
-      const item = document.createElement("div");
-      item.className = "sos-list-item";
-      item.innerHTML = `
-        <div class="top-row">
-          <b>${d.userName || "ไม่ระบุชื่อ"}</b>
-          <span class="tag" style="background:${badgeColor(d.status)}">แบต ${d.battery ?? "N/A"}%</span>
-        </div>
-        <div style="font-size:0.8rem;color:#B8790A;margin-top:2px">${statusLabel(d.status)}</div>
-        <div class="mono" style="color:#6B7A8F;font-size:0.75rem;margin-top:4px">
-          ${d.lat.toFixed(5)}, ${d.lng.toFixed(5)} ${d.userPhone ? " · โทร " + d.userPhone : ""}
-        </div>
-        <div class="actions">
-          <button class="primary" data-action="ack" data-id="${id}">รับเรื่องแล้ว</button>
-          <button data-action="resolve" data-id="${id}">✅ ปลอดภัยแล้ว</button>
-        </div>
-      `;
-      list.appendChild(item);
+        // --- แสดงจุดบนแผนที่แบบไม่ระบุตัวตน (แค่สถานะ+ตำแหน่ง) ---
+        // ไม่แสดงจุด SOS ที่ช่วยเหลือสำเร็จแล้ว เพื่อไม่ให้แผนที่รกด้วยข้อมูลเก่า
+        if (d.kind === "sos" && d.resolved) {
+          if (pinMarkers.has(id)) { map.removeLayer(pinMarkers.get(id)); pinMarkers.delete(id); }
+          return;
+        }
+
+        const cls = pinClass(d.kind, d.status);
+        const emoji = d.kind === "sos" ? "🆘" : d.kind === "checkin" ? "✅" : d.status === "unsafe" ? "⚠️" : d.status === "unknown" ? "❓" : "✅";
+
+        if (!pinMarkers.has(id)) {
+          const marker = L.marker([d.lat, d.lng], {
+            icon: L.divIcon({ className: "", html: `<div class="sos-pin ${cls}">${emoji}</div>`, iconSize: [26, 26] })
+          }).addTo(map);
+          pinMarkers.set(id, marker);
+        }
+        // Popup แสดงแค่สถานะ ไม่มีชื่อ/เบอร์โทรใดๆ ทั้งสิ้น
+        pinMarkers.get(id).bindPopup(statusLabel(d.kind, d.status));
       });
 
-      // ลบ marker ที่ไม่มีในผลลัพธ์แล้ว (ถูก resolve ไปแล้ว)
-      sosMarkers.forEach((marker, id) => {
+      pinMarkers.forEach((marker, id) => {
         if (!currentIds.has(id)) {
           map.removeLayer(marker);
-          sosMarkers.delete(id);
+          pinMarkers.delete(id);
         }
       });
 
-      document.getElementById("stat-sos-pending").textContent = count;
-      if (count === 0) {
-        list.innerHTML = '<div style="color:#6B7A8F;font-size:0.85rem">ไม่มีคำขอ SOS ที่ค้างอยู่ในขณะนี้</div>';
-      }
+      document.getElementById("stat-safe").textContent = safeCount;
+      document.getElementById("stat-unsafe").textContent = unsafeCount;
+      document.getElementById("stat-sos-pending").textContent = sosPending;
     },
     (err) => {
-      // ถ้า query ล้มเหลว (เช่น Firestore rules ปฏิเสธ) ให้เห็น error ชัดเจนแทนที่จะเงียบไปเฉยๆ
-      console.error("watchSOS error:", err);
-      document.getElementById("sos-list").innerHTML =
-        `<div style="color:#E5484D;font-size:0.8rem">โหลดข้อมูล SOS ไม่สำเร็จ: ${err.message}</div>`;
+      console.error("watchPublicPins error:", err);
     }
   );
-
-  document.getElementById("sos-list").addEventListener("click", async (e) => {
-    const btn = e.target.closest("button[data-action]");
-    if (!btn) return;
-    const id = btn.dataset.id;
-    const ref = doc(db, "sos_alerts", id);
-    if (btn.dataset.action === "resolve") {
-      await updateDoc(ref, { resolved: true, resolvedAt: serverTimestamp() });
-    } else {
-      await updateDoc(ref, { acknowledged: true });
-      btn.textContent = "✓ รับเรื่องแล้ว";
-      btn.disabled = true;
-    }
-  });
 }
 
-function badgeColor(status) {
-  const map = {
-    trapped: "#E5484D",
-    injured_severe: "#F5A623",
-    injured_minor: "#E5C85A",
-    helping: "#3E7CB1"
-  };
-  return map[status] || "#94A3B8";
-}
-
-// -------------------------------------------------------- ฟังความจุจุดปลอดภัย
+// -------------------------------------------------------- ฟังความจุจุดปลอดภัย (ไม่มี PII)
 function watchZones() {
   onSnapshot(collection(db, "zone_state"), (snap) => {
     let totalPeople = 0;
-    let totalCapacity = 0;
 
     snap.forEach((docSnap) => {
       const d = docSnap.data();
       const id = docSnap.id;
       totalPeople += d.currentCount || 0;
-      totalCapacity += d.capacity || 0;
 
       const ratio = (d.currentCount || 0) / (d.capacity || 1);
       const cls = ratio > 0.85 ? "full" : ratio > 0.5 ? "mid" : "ok";
@@ -166,7 +115,7 @@ function watchZones() {
         icon: L.divIcon({ className: "", html: `<div class="zone-pin ${cls}"><span>🏕️</span></div>`, iconSize: [26, 26] })
       })
         .addTo(map)
-        .bindPopup(`<b>${d.name}</b><br>${d.currentCount || 0}/${d.capacity} คน`);
+        .bindPopup(`<b>${d.name}</b><br>${d.currentCount || 0}/${d.capacity} คน (ไม่แสดงรายชื่อ)`);
       zoneMarkers.set(id, marker);
     });
 
@@ -174,71 +123,12 @@ function watchZones() {
   });
 }
 
-// -------------------------------------------------------- ฟังสถิติคำขอ/เช็คอิน
-function watchRequests() {
-  onSnapshot(collection(db, "safe_requests"), (snap) => {
-    totalRequests = snap.size;
-    totalCheckins = 0;
-    snap.forEach((d) => { if (d.data().checkedIn) totalCheckins++; });
-
-    document.getElementById("stat-requests").textContent = totalRequests;
-    document.getElementById("stat-checkins").textContent = totalCheckins;
-    document.getElementById("stat-not-arrived").textContent = Math.max(0, totalRequests - totalCheckins);
-  });
-}
-
-// -------------------------------------------------------- รายชื่อผู้ปลอดภัย (เช็คอินแล้ว)
-function watchSafePeople() {
-  // ใช้ where() อย่างเดียว (ไม่ผสม orderBy) เพื่อเลี่ยงปัญหา composite index เหมือน watchSOS
-  const q = query(collection(db, "safe_requests"), where("checkedIn", "==", true));
-
-  onSnapshot(
-    q,
-    (snap) => {
-      const list = document.getElementById("safe-list");
-      const docs = snap.docs.slice().sort((a, b) => {
-        const ta = a.data().checkInTime?.toMillis?.() ?? 0;
-        const tb = b.data().checkInTime?.toMillis?.() ?? 0;
-        return tb - ta;
-      });
-
-      if (docs.length === 0) {
-        list.innerHTML = '<div style="color:#6B7A8F;font-size:0.85rem">ยังไม่มีใครเช็คอินปลอดภัย</div>';
-        return;
-      }
-
-      list.innerHTML = "";
-      docs.slice(0, 30).forEach((docSnap) => {
-        const d = docSnap.data();
-        const item = document.createElement("div");
-        item.className = "sos-list-item";
-        item.innerHTML = `
-          <div class="top-row">
-            <b>${d.userName || "ไม่ระบุชื่อ"}</b>
-            <span class="tag" style="background:#2FB380">✅ ปลอดภัย</span>
-          </div>
-          <div style="font-size:0.8rem;color:#6B7A8F;margin-top:2px">📍 ${d.recommendedZoneName || "-"}</div>
-          ${d.userPhone ? `<div class="mono" style="color:#6B7A8F;font-size:0.75rem;margin-top:2px">โทร ${d.userPhone}</div>` : ""}
-        `;
-        list.appendChild(item);
-      });
-    },
-    (err) => {
-      console.error("watchSafePeople error:", err);
-      document.getElementById("safe-list").innerHTML =
-        `<div style="color:#E5484D;font-size:0.8rem">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
-    }
-  );
-}
-
 function tickClock() {
   document.getElementById("clock-pill").textContent = new Date().toLocaleTimeString("th-TH");
 }
 
 initMap();
-watchSOS();
+watchPublicPins();
 watchZones();
-watchRequests();
-watchSafePeople();
 setInterval(tickClock, 1000);
 tickClock();

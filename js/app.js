@@ -7,7 +7,8 @@ import { getUserLocation, showToast, formatClock, FALLBACK_LOCATION, haversineKm
 import { initQuakeWatcher, setWideMode, simulateQuake } from "./quake.js";
 import { fetchNearbySafeZones, scoreZones, fetchWalkingRoute, checkInToZone } from "./safezone.js";
 import { initSOS, getStatusOptions, submitSOS, closeStatusSheet } from "./sos.js";
-import { db, collection, addDoc, updateDoc, doc, serverTimestamp } from "./config.js";
+import { initReport, getReportStatusOptions, submitReport, openReportSheet, closeReportSheet } from "./report.js";
+import { db, collection, doc, setDoc, updateDoc, serverTimestamp } from "./config.js";
 import { playSiren, vibrateAlert } from "./sound.js";
 import { ensureProfile, openProfileModal, getProfile } from "./profile.js";
 
@@ -32,6 +33,7 @@ async function main() {
 
   initMap();
   initQuakeWatcher(userLocation, onQuakeDetected);
+  initReport(() => userLocation);
   wireButtons();
 }
 
@@ -72,6 +74,12 @@ function wireButtons() {
       showToast("บันทึกข้อมูลของคุณแล้ว");
     }, getProfile());
   });
+  document.getElementById("btn-report").addEventListener("click", openReportSheet);
+  getReportStatusOptions().forEach((opt) => {
+    const btn = document.querySelector(`.report-option[data-key="${opt.key}"]`);
+    if (btn) btn.addEventListener("click", () => submitReport(opt.key));
+  });
+  document.getElementById("report-cancel").addEventListener("click", closeReportSheet);
 
   initSOS(document.getElementById("btn-sos"), () => userLocation);
 
@@ -214,7 +222,9 @@ async function handleRequestZone() {
     drawRouteTo(currentRecommendation);
 
     // บันทึกคำขอนี้ไว้วิเคราะห์ (กี่คนขอ, ขอจุดไหน, เช็คอินสำเร็จกี่คน, เป็นใคร)
-    const reqRef = await addDoc(collection(db, "safe_requests"), {
+    // ใช้ doc()+setDoc() แทน addDoc() เพื่อรู้ id ล่วงหน้า จะได้ใช้ id เดียวกันตอนเขียน public_pins ทีหลัง
+    const reqRef = doc(collection(db, "safe_requests"));
+    await setDoc(reqRef, {
       userId: userProfile?.userId || null,
       userName: userProfile?.name || "ไม่ระบุชื่อ",
       userPhone: userProfile?.phone || null,
@@ -255,7 +265,8 @@ function renderZonesOnMap(zones) {
       .bindPopup(
         `<b>${idx === 0 ? "⭐ แนะนำ: " : ""}${z.name}</b><br>` +
         `ระยะทาง ${z.distanceKm.toFixed(1)} กม.<br>` +
-        `ความจุ ${z.currentCount}/${z.capacity} คน`
+        `ความจุ ${z.currentCount}/${z.capacity} คน<br>` +
+        `🛡️ ความปลอดภัย ${z.safetyPercent}%`
       );
     zoneMarkers.set(z.id, marker);
   });
@@ -267,6 +278,7 @@ function renderRecommendation(zone) {
   document.getElementById("rec-name").textContent = `${zone.emoji} ${zone.name}`;
   document.getElementById("rec-distance").textContent = zone.distanceKm.toFixed(2) + " กม.";
   document.getElementById("rec-capacity").textContent = `${zone.currentCount}/${zone.capacity} คน`;
+  document.getElementById("rec-safety").textContent = `🛡️ ความปลอดภัย ${zone.safetyPercent}% · รองรับได้อีก ${zone.capacityRemaining} คน`;
   const pct = Math.min(100, Math.round((zone.currentCount / zone.capacity) * 100));
   document.getElementById("rec-bar").style.width = pct + "%";
   document.getElementById("rec-bar").style.background =
@@ -355,6 +367,15 @@ async function handleCheckIn() {
       await updateDoc(doc(db, "safe_requests", currentRequestId), {
         checkedIn: true,
         checkInTime: serverTimestamp()
+      });
+      // เขียนจุดสาธารณะ (ไม่มีชื่อ/เบอร์) ให้ Dashboard สาธารณะเห็นว่า "มีคนปลอดภัยที่นี่" ได้
+      await setDoc(doc(db, "public_pins", currentRequestId), {
+        kind: "checkin",
+        status: "safe",
+        lat: currentRecommendation.lat,
+        lng: currentRecommendation.lng,
+        zoneName: currentRecommendation.name,
+        createdAt: serverTimestamp()
       });
     }
     showToast(`✅ เช็คอินที่ ${currentRecommendation.name} สำเร็จ`);

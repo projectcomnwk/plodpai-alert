@@ -2,7 +2,7 @@
 // sos.js — ปุ่ม SOS ขอความช่วยเหลือ (กดค้าง 3 วินาทีกันกดพลาด)
 // ============================================================================
 
-import { db, collection, addDoc, serverTimestamp } from "./config.js";
+import { db, collection, doc, setDoc, serverTimestamp } from "./config.js";
 import { getBatteryLevel, showToast } from "./utils.js";
 import { getProfile } from "./profile.js";
 
@@ -73,7 +73,11 @@ export async function submitSOS(statusKey) {
   const battery = await getBatteryLevel();
   const profile = getProfile();
 
-  const docRef = await addDoc(collection(db, "sos_alerts"), {
+  // สร้าง id ล่วงหน้า เพื่อใช้ id เดียวกันทั้งเอกสารแบบเต็ม (มีชื่อ/เบอร์) และแบบสาธารณะ (ไม่มี)
+  const ref = doc(collection(db, "sos_alerts"));
+
+  // เอกสารเต็ม — มีชื่อ/เบอร์/ตำแหน่งละเอียด เห็นได้เฉพาะ admin/หน่วยกู้ภัยที่ล็อกอินแล้ว
+  await setDoc(ref, {
     userId: profile?.userId || null,
     userName: profile?.name || "ไม่ระบุชื่อ",
     userPhone: profile?.phone || null,
@@ -86,7 +90,17 @@ export async function submitSOS(statusKey) {
     createdAt: serverTimestamp()
   });
 
+  // เอกสารสาธารณะ — ไม่มีชื่อ/เบอร์ ใครก็เข้าดูได้ (ใช้แสดงจุดบน Dashboard สาธารณะ)
+  await setDoc(doc(db, "public_pins", ref.id), {
+    kind: "sos",
+    status: statusKey,
+    lat: location.lat,
+    lng: location.lng,
+    resolved: false,
+    createdAt: serverTimestamp()
+  });
+
   closeStatusSheet();
   showToast("🆘 ส่งคำขอความช่วยเหลือแล้ว — เจ้าหน้าที่จะเห็นตำแหน่งของคุณ");
-  return docRef.id;
+  return ref.id;
 }

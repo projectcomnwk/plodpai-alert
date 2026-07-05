@@ -9,6 +9,7 @@ import {
   collection,
   doc,
   addDoc,
+  setDoc,
   updateDoc,
   onSnapshot,
   query,
@@ -16,9 +17,14 @@ import {
   orderBy,
   serverTimestamp,
   runTransaction,
-  setDoc,
   getDoc
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  onAuthStateChanged,
+  signOut
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // ---- Firebase config (จาก Firebase Console ของโปรเจค plodpai-alert) --------
 const firebaseConfig = {
@@ -33,13 +39,16 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
 
 // ส่งออกทุกอย่างที่ไฟล์อื่นในระบบต้องใช้ (import { db, collection, ... } from "./config.js")
 export {
   db,
+  auth,
   collection,
   doc,
   addDoc,
+  setDoc,
   updateDoc,
   onSnapshot,
   query,
@@ -47,6 +56,8 @@ export {
   orderBy,
   serverTimestamp,
   runTransaction,
-  setDoc,
-  getDoc
+  getDoc,
+  signInWithEmailAndPassword,
+  onAuthStateChanged,
+  signOut
 };

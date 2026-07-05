@@ -45,6 +45,7 @@
       <span>👥 <span id="rec-capacity">-</span></span>
     </div>
     <div class="capacity-bar"><div id="rec-bar" style="width:0%"></div></div>
+    <div style="font-size:0.8rem;color:var(--safe-green);margin-top:8px;font-family:var(--font-mono)" id="rec-safety">-</div>
     <button class="btn btn-primary" id="btn-navigate" style="width:100%;margin-top:14px;flex-direction:row;gap:8px">
       <span class="icon" style="font-size:1.1rem">🧭</span>
       <span class="btn-label">เดินทางไปจุดนี้ (นำทางแบบเรียลไทม์)</span>
@@ -77,12 +78,18 @@
     <button class="btn btn-demo" id="btn-wide-mode" style="font-size:0.78rem">
       🌏 เปิดโหมดขยายพื้นที่ (พิสูจน์ข้อมูลจริงจาก USGS)
     </button>
+
+    <button class="btn btn-primary full-width" id="btn-report" style="background:var(--signal-blue-bg);border:1px solid var(--signal-blue);color:var(--signal-blue)">
+      <span class="icon">📍</span>
+      <span class="btn-label">แจ้งพิกัด/สถานะของฉัน (กรณีไม่ได้ไปจุดที่แนะนำ)</span>
+    </button>
   </div>
 
   <div class="footnote">
     ระบบดึงข้อมูลแผ่นดินไหวจาก USGS Earthquake API แบบเรียลไทม์ และดึงจุดปลอดภัยจาก OpenStreetMap
     โหมด "จำลองแผ่นดินไหว" ใช้สำหรับสาธิตเท่านั้น ข้อมูลจะถูกบันทึกแยกจากข้อมูลจริง (source: DEMO)
-    <br />ดู Dashboard สำหรับหน่วยกู้ภัย: <a href="dashboard.html">dashboard.html</a>
+    <br />ดู Dashboard สาธารณะ (ไม่มีชื่อ/เบอร์โทร): <a href="dashboard.html">dashboard.html</a>
+    <br />สำหรับ Admin/หน่วยกู้ภัย (ต้องล็อกอิน): <a href="admin.html">admin.html</a>
   </div>
 </div>
 
@@ -112,6 +119,18 @@
     <div class="mono" style="text-align:center;font-size:1.3rem;margin-bottom:14px" id="demo-mag-display">6.5</div>
     <button class="status-option trapped" id="demo-run" style="justify-content:center;font-weight:600">▶️ เริ่มจำลอง ณ ตำแหน่งปัจจุบัน</button>
     <button class="sheet-cancel" id="demo-cancel">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- ================= แผงแจ้งพิกัด/สถานะของตัวเอง ================= -->
+<div class="sheet-backdrop" id="report-sheet">
+  <div class="sheet">
+    <h3>📍 แจ้งพิกัด/สถานะของฉัน</h3>
+    <div class="sub">สำหรับกรณีที่คุณไม่ได้เดินทางไปยังจุดปลอดภัยที่ระบบแนะนำ แต่ต้องการรายงานตำแหน่งปัจจุบัน</div>
+    <button class="status-option report-option" data-key="safe" style="border-color:var(--safe-green)"><span class="sw" style="background:var(--safe-green)"></span> ปลอดภัยดี ณ จุดนี้</button>
+    <button class="status-option report-option" data-key="unsafe" style="border-color:var(--alert-red)"><span class="sw" style="background:var(--alert-red)"></span> ไม่ปลอดภัย ต้องการความช่วยเหลือ</button>
+    <button class="status-option report-option" data-key="unknown" style="border-color:var(--warn-amber)"><span class="sw" style="background:var(--warn-amber)"></span> ไม่แน่ใจ / กำลังประเมินสถานการณ์</button>
+    <button class="sheet-cancel" id="report-cancel">ยกเลิก</button>
   </div>
 </div>
 

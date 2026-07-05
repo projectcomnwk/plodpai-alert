@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Plodpai Alert — Dashboard เจ้าหน้าที่</title>
+<title>Plodpai Alert — Dashboard สาธารณะ</title>
 <link rel="stylesheet" href="css/style.css" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 </head>
@@ -11,7 +11,7 @@
 <div class="app-shell">
 
   <div class="topbar">
-    <div class="brand"><span class="dot"></span> Plodpai Alert — Dashboard</div>
+    <div class="brand"><span class="dot"></span> Plodpai Alert — Dashboard สาธารณะ</div>
     <div class="status-pill" id="clock-pill">กำลังโหลด...</div>
   </div>
 
@@ -21,25 +21,22 @@
       <div id="map"></div>
     </div>
 
-    <!-- ================= สถิติ + รายการ SOS ================= -->
+    <!-- ================= สถิติภาพรวม (ไม่มีชื่อ/เบอร์โทร) ================= -->
     <div>
       <div class="dash-card" style="margin-bottom:14px">
-        <div class="stat-row">
+        <h2 style="font-size:0.95rem;margin-bottom:10px">📊 ภาพรวมสถานการณ์</h2>
+        <div class="stat-row" style="grid-template-columns:repeat(2,1fr)">
+          <div class="stat-box ok">
+            <div class="num" id="stat-safe">0</div>
+            <div class="lbl">คนปลอดภัย</div>
+          </div>
+          <div class="stat-box danger">
+            <div class="num" id="stat-unsafe">0</div>
+            <div class="lbl">ไม่ปลอดภัย/ต้องการความช่วยเหลือ</div>
+          </div>
           <div class="stat-box danger">
             <div class="num" id="stat-sos-pending">0</div>
-            <div class="lbl">SOS ค้างอยู่</div>
-          </div>
-          <div class="stat-box">
-            <div class="num" id="stat-requests">0</div>
-            <div class="lbl">คนขอจุดปลอดภัย</div>
-          </div>
-          <div class="stat-box ok">
-            <div class="num" id="stat-checkins">0</div>
-            <div class="lbl">เช็คอินแล้ว</div>
-          </div>
-          <div class="stat-box warn">
-            <div class="num" id="stat-not-arrived">0</div>
-            <div class="lbl">ยังไม่ถึง</div>
+            <div class="lbl">SOS ด่วนค้างอยู่</div>
           </div>
           <div class="stat-box">
             <div class="num" id="stat-total-people">0</div>
@@ -48,21 +45,23 @@
         </div>
       </div>
 
-      <div class="dash-card" style="margin-bottom:14px">
-        <h2 style="font-size:0.95rem;margin-bottom:10px">✅ รายชื่อผู้ปลอดภัย (เช็คอินล่าสุดก่อน)</h2>
-        <div id="safe-list"></div>
-      </div>
-
       <div class="dash-card">
-        <h2 style="font-size:0.95rem;margin-bottom:10px">🆘 คำขอความช่วยเหลือ (เรียงล่าสุดก่อน)</h2>
-        <div id="sos-list"></div>
+        <div style="font-size:0.85rem;line-height:1.6;color:#4B5768">
+          🔒 <b>เพื่อความเป็นส่วนตัว</b> หน้านี้แสดงเฉพาะจำนวนรวมและตำแหน่งบนแผนที่แบบไม่ระบุตัวตน
+          ไม่มีการแสดงชื่อ เบอร์โทร หรือข้อมูลส่วนบุคคลใดๆ ของผู้ใช้งานทั้งสิ้น
+          <br /><br />
+          จุดสีต่างๆ บนแผนที่: <br />
+          🔵 = มีคนปลอดภัยอยู่บริเวณนี้ &nbsp; ⚠️/🆘 = มีคนต้องการความช่วยเหลือ &nbsp; 🏕️ = จุดปลอดภัย (แสดงความจุ)
+          <br /><br />
+          หากคุณเป็นเจ้าหน้าที่/หน่วยกู้ภัย เข้าดูข้อมูลเต็มรูปแบบ (ชื่อ เบอร์โทร) ได้ที่
+          <a href="admin.html">admin.html</a> (ต้องล็อกอิน)
+        </div>
       </div>
     </div>
   </div>
 
   <div class="footnote" style="margin:0 18px">
-    Dashboard นี้เปิดให้ทุกคนที่มีลิงก์เข้าดูได้ (ไม่ต้องล็อกอิน) เหมาะสำหรับสาธิตและหน่วยกู้ภัยภาคสนาม
-    ก่อนใช้งานจริงแนะนำเพิ่มระบบยืนยันตัวตนและ Firestore Security Rules ที่รัดกุมขึ้น
+    Dashboard สาธารณะนี้ไม่ต้องล็อกอิน เหมาะสำหรับให้ชุมชน/ครอบครัวติดตามสถานการณ์ภาพรวมได้ทันที
   </div>
 </div>
 

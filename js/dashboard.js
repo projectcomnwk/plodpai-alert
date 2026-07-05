@@ -38,20 +38,31 @@ function statusLabel(status) {
 
 // -------------------------------------------------------- ฟัง SOS แบบเรียลไทม์
 function watchSOS() {
-  const q = query(collection(db, "sos_alerts"), where("resolved", "==", false), orderBy("createdAt", "desc"));
-  onSnapshot(q, (snap) => {
-    const list = document.getElementById("sos-list");
-    list.innerHTML = "";
-    let count = 0;
+  // หมายเหตุ: ตั้งใจไม่ใช้ orderBy() ร่วมกับ where() ในคำสั่งเดียวกัน
+  // เพราะ Firestore จะต้องการ "Composite Index" ที่ยังไม่ถูกสร้างไว้ล่วงหน้า
+  // จึงดึงข้อมูลมาทั้งหมดที่ resolved == false แล้วมาเรียงลำดับเองฝั่ง client แทน
+  const q = query(collection(db, "sos_alerts"), where("resolved", "==", false));
 
-    // ล้าง marker เก่าที่ไม่อยู่ในผลลัพธ์ใหม่แล้ว
-    const currentIds = new Set();
+  onSnapshot(
+    q,
+    (snap) => {
+      const list = document.getElementById("sos-list");
+      list.innerHTML = "";
+      let count = 0;
+      const currentIds = new Set();
 
-    snap.forEach((docSnap) => {
-      const d = docSnap.data();
-      const id = docSnap.id;
-      currentIds.add(id);
-      count++;
+      // เรียงเอกสารจากใหม่ไปเก่า (ใหม่สุดอยู่บนสุด) ด้วย createdAt
+      const docs = snap.docs.slice().sort((a, b) => {
+        const ta = a.data().createdAt?.toMillis?.() ?? 0;
+        const tb = b.data().createdAt?.toMillis?.() ?? 0;
+        return tb - ta;
+      });
+
+      docs.forEach((docSnap) => {
+        const d = docSnap.data();
+        const id = docSnap.id;
+        currentIds.add(id);
+        count++;
 
       // --- marker บนแผนที่ ---
       if (!sosMarkers.has(id)) {
@@ -65,7 +76,8 @@ function watchSOS() {
         sosMarkers.set(id, marker);
       }
       sosMarkers.get(id).bindPopup(
-        `<b>${statusLabel(d.status)}</b><br>แบต ${d.battery ?? "ไม่ทราบ"}%`
+        `<b>${d.userName || "ไม่ระบุชื่อ"}</b><br>${statusLabel(d.status)}<br>แบต ${d.battery ?? "ไม่ทราบ"}%` +
+        (d.userPhone ? `<br>โทร ${d.userPhone}` : "")
       );
 
       // --- รายการในแผงด้านข้าง ---
@@ -73,11 +85,12 @@ function watchSOS() {
       item.className = "sos-list-item";
       item.innerHTML = `
         <div class="top-row">
-          <b>${statusLabel(d.status)}</b>
+          <b>${d.userName || "ไม่ระบุชื่อ"}</b>
           <span class="tag" style="background:${badgeColor(d.status)}">แบต ${d.battery ?? "N/A"}%</span>
         </div>
+        <div style="font-size:0.8rem;color:#B8790A;margin-top:2px">${statusLabel(d.status)}</div>
         <div class="mono" style="color:#6B7A8F;font-size:0.75rem;margin-top:4px">
-          ${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}
+          ${d.lat.toFixed(5)}, ${d.lng.toFixed(5)} ${d.userPhone ? " · โทร " + d.userPhone : ""}
         </div>
         <div class="actions">
           <button class="primary" data-action="ack" data-id="${id}">รับเรื่องแล้ว</button>
@@ -85,21 +98,28 @@ function watchSOS() {
         </div>
       `;
       list.appendChild(item);
-    });
+      });
 
-    // ลบ marker ที่ไม่มีในผลลัพธ์แล้ว (ถูก resolve ไปแล้ว)
-    sosMarkers.forEach((marker, id) => {
-      if (!currentIds.has(id)) {
-        map.removeLayer(marker);
-        sosMarkers.delete(id);
+      // ลบ marker ที่ไม่มีในผลลัพธ์แล้ว (ถูก resolve ไปแล้ว)
+      sosMarkers.forEach((marker, id) => {
+        if (!currentIds.has(id)) {
+          map.removeLayer(marker);
+          sosMarkers.delete(id);
+        }
+      });
+
+      document.getElementById("stat-sos-pending").textContent = count;
+      if (count === 0) {
+        list.innerHTML = '<div style="color:#6B7A8F;font-size:0.85rem">ไม่มีคำขอ SOS ที่ค้างอยู่ในขณะนี้</div>';
       }
-    });
-
-    document.getElementById("stat-sos-pending").textContent = count;
-    if (count === 0) {
-      list.innerHTML = '<div style="color:#6B7A8F;font-size:0.85rem">ไม่มีคำขอ SOS ที่ค้างอยู่ในขณะนี้</div>';
+    },
+    (err) => {
+      // ถ้า query ล้มเหลว (เช่น Firestore rules ปฏิเสธ) ให้เห็น error ชัดเจนแทนที่จะเงียบไปเฉยๆ
+      console.error("watchSOS error:", err);
+      document.getElementById("sos-list").innerHTML =
+        `<div style="color:#E5484D;font-size:0.8rem">โหลดข้อมูล SOS ไม่สำเร็จ: ${err.message}</div>`;
     }
-  });
+  );
 
   document.getElementById("sos-list").addEventListener("click", async (e) => {
     const btn = e.target.closest("button[data-action]");
@@ -167,6 +187,50 @@ function watchRequests() {
   });
 }
 
+// -------------------------------------------------------- รายชื่อผู้ปลอดภัย (เช็คอินแล้ว)
+function watchSafePeople() {
+  // ใช้ where() อย่างเดียว (ไม่ผสม orderBy) เพื่อเลี่ยงปัญหา composite index เหมือน watchSOS
+  const q = query(collection(db, "safe_requests"), where("checkedIn", "==", true));
+
+  onSnapshot(
+    q,
+    (snap) => {
+      const list = document.getElementById("safe-list");
+      const docs = snap.docs.slice().sort((a, b) => {
+        const ta = a.data().checkInTime?.toMillis?.() ?? 0;
+        const tb = b.data().checkInTime?.toMillis?.() ?? 0;
+        return tb - ta;
+      });
+
+      if (docs.length === 0) {
+        list.innerHTML = '<div style="color:#6B7A8F;font-size:0.85rem">ยังไม่มีใครเช็คอินปลอดภัย</div>';
+        return;
+      }
+
+      list.innerHTML = "";
+      docs.slice(0, 30).forEach((docSnap) => {
+        const d = docSnap.data();
+        const item = document.createElement("div");
+        item.className = "sos-list-item";
+        item.innerHTML = `
+          <div class="top-row">
+            <b>${d.userName || "ไม่ระบุชื่อ"}</b>
+            <span class="tag" style="background:#2FB380">✅ ปลอดภัย</span>
+          </div>
+          <div style="font-size:0.8rem;color:#6B7A8F;margin-top:2px">📍 ${d.recommendedZoneName || "-"}</div>
+          ${d.userPhone ? `<div class="mono" style="color:#6B7A8F;font-size:0.75rem;margin-top:2px">โทร ${d.userPhone}</div>` : ""}
+        `;
+        list.appendChild(item);
+      });
+    },
+    (err) => {
+      console.error("watchSafePeople error:", err);
+      document.getElementById("safe-list").innerHTML =
+        `<div style="color:#E5484D;font-size:0.8rem">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
+    }
+  );
+}
+
 function tickClock() {
   document.getElementById("clock-pill").textContent = new Date().toLocaleTimeString("th-TH");
 }
@@ -175,5 +239,6 @@ initMap();
 watchSOS();
 watchZones();
 watchRequests();
+watchSafePeople();
 setInterval(tickClock, 1000);
 tickClock();

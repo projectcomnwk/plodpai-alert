@@ -392,6 +392,147 @@ a { color: var(--signal-blue); }
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ============================== Quake modal (popup) ======================= */
+
+.quake-modal-backdrop {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(4,8,16,0.82);
+  z-index: 300;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.quake-modal-backdrop.show { display: flex; animation: fadeIn .2s ease; }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.quake-modal {
+  width: 100%;
+  max-width: 420px;
+  background: var(--ink-raised);
+  border: 2px solid var(--alert-red);
+  border-radius: var(--radius-lg);
+  padding: 26px 22px 22px 22px;
+  text-align: center;
+  box-shadow: 0 0 0 8px var(--alert-red-bg), 0 20px 60px rgba(0,0,0,0.5);
+  animation: modalPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes modalPulse {
+  0%, 100% { box-shadow: 0 0 0 8px var(--alert-red-bg), 0 20px 60px rgba(0,0,0,0.5); }
+  50%      { box-shadow: 0 0 0 14px rgba(229,72,77,0.22), 0 20px 60px rgba(0,0,0,0.5); }
+}
+
+.quake-modal .qm-icon { font-size: 2.6rem; line-height: 1; }
+
+.quake-modal h2 {
+  font-family: var(--font-display);
+  color: var(--alert-red);
+  font-size: 1.3rem;
+  margin: 10px 0 4px 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.quake-modal .qm-source {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-lo);
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+
+.quake-modal .qm-place {
+  font-size: 0.95rem;
+  color: var(--text-hi);
+  margin-bottom: 6px;
+}
+
+.quake-modal .qm-meta {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-lo);
+  margin-bottom: 14px;
+}
+
+.quake-modal .qm-eta {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1.9rem;
+  color: var(--alert-red);
+  margin-bottom: 14px;
+}
+
+.quake-modal .qm-drop {
+  font-size: 0.86rem;
+  line-height: 1.55;
+  background: rgba(0,0,0,0.2);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  text-align: left;
+  margin-bottom: 16px;
+}
+
+.quake-modal .qm-ack {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--alert-red);
+  color: #fff;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.quake-modal .qm-ack:active { transform: scale(0.98); }
+
+/* ============================== Nav bar (นำทางเรียลไทม์) ================== */
+
+.nav-bar {
+  display: none;
+  position: fixed;
+  left: 50%; bottom: 0;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 640px;
+  background: var(--signal-blue);
+  padding: 14px 18px;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 90;
+  box-shadow: 0 -8px 24px rgba(0,0,0,0.35);
+}
+.nav-bar.show { display: flex; animation: slideDown .3s ease; }
+
+.nav-bar .nav-zone {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #fff;
+}
+.nav-bar .nav-distance {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: rgba(255,255,255,0.85);
+  margin-top: 2px;
+}
+.nav-bar .nav-cancel {
+  background: rgba(0,0,0,0.2);
+  border: none;
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* กันไม่ให้ nav-bar บังปุ่ม/เนื้อหาด้านล่างสุดของหน้า */
+.app-shell { padding-bottom: 140px; }
+
 /* ============================== Footer note =============================== */
 
 .footnote {

@@ -4,6 +4,7 @@
 
 import { db, collection, addDoc, serverTimestamp } from "./config.js";
 import { getBatteryLevel, showToast } from "./utils.js";
+import { getProfile } from "./profile.js";
 
 const HOLD_DURATION_MS = 3000;
 
@@ -70,8 +71,12 @@ export function getStatusOptions() {
 export async function submitSOS(statusKey) {
   const location = await getLocationFn();
   const battery = await getBatteryLevel();
+  const profile = getProfile();
 
   const docRef = await addDoc(collection(db, "sos_alerts"), {
+    userId: profile?.userId || null,
+    userName: profile?.name || "ไม่ระบุชื่อ",
+    userPhone: profile?.phone || null,
     lat: location.lat,
     lng: location.lng,
     accuracy: location.accuracy || null,

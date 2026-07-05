@@ -3,20 +3,28 @@
 // เชื่อมแผนที่ + quake.js + safezone.js + sos.js เข้าด้วยกัน
 // ============================================================================
 
-import { getUserLocation, showToast, formatClock, FALLBACK_LOCATION } from "./utils.js";
+import { getUserLocation, showToast, formatClock, FALLBACK_LOCATION, haversineKm } from "./utils.js";
 import { initQuakeWatcher, setWideMode, simulateQuake } from "./quake.js";
 import { fetchNearbySafeZones, scoreZones, fetchWalkingRoute, checkInToZone } from "./safezone.js";
 import { initSOS, getStatusOptions, submitSOS, closeStatusSheet } from "./sos.js";
 import { db, collection, addDoc, updateDoc, doc, serverTimestamp } from "./config.js";
+import { playSiren, vibrateAlert } from "./sound.js";
+import { ensureProfile, openProfileModal, getProfile } from "./profile.js";
 
 let map, userMarker, epicenterCircle, epicenterMarker, routeLine;
 const zoneMarkers = new Map();
 let userLocation = null;
+let userProfile = null; // { userId, name, phone } — กรอกครั้งแรกแล้วเก็บไว้ในเครื่อง
 let currentRecommendation = null; // จุดที่ระบบแนะนำล่าสุด (ไว้ใช้ตอนกดเช็คอิน)
 let currentRequestId = null; // id ของเอกสาร safe_requests ล่าสุด (ไว้ผูกกับการเช็คอิน)
 let quakeCountdownTimer = null;
+let navWatchId = null; // watchPosition id ตอนกำลังนำทาง
+let navigating = false;
+const ARRIVAL_THRESHOLD_M = 40; // ถือว่า "ถึงแล้ว" เมื่อห่างจุดหมายไม่เกินนี้ (เมตร)
 
 async function main() {
+  userProfile = await ensureProfile(); // ต้องกรอกชื่อก่อนถึงจะใช้งานต่อได้
+
   userLocation = await getUserLocation();
   if (userLocation.isFallback) {
     showToast("ไม่พบสัญญาณ GPS — ใช้ตำแหน่งสำรอง (โรงเรียนหนองหินวิทยาคม)");
@@ -47,6 +55,23 @@ function wireButtons() {
   document.getElementById("btn-checkin").addEventListener("click", handleCheckIn);
   document.getElementById("btn-demo").addEventListener("click", openDemoPanel);
   document.getElementById("btn-wide-mode").addEventListener("click", toggleWideMode);
+  document.getElementById("btn-navigate").addEventListener("click", () => {
+    if (currentRecommendation) startNavigation(currentRecommendation);
+  });
+  document.getElementById("btn-cancel-nav").addEventListener("click", stopNavigation);
+  document.getElementById("arrival-cancel").addEventListener("click", () => {
+    document.getElementById("arrival-sheet").classList.remove("show");
+  });
+  document.getElementById("btn-confirm-checkin").addEventListener("click", async () => {
+    document.getElementById("arrival-sheet").classList.remove("show");
+    await handleCheckIn();
+  });
+  document.getElementById("btn-profile").addEventListener("click", () => {
+    openProfileModal((profile) => {
+      userProfile = profile;
+      showToast("บันทึกข้อมูลของคุณแล้ว");
+    }, getProfile());
+  });
 
   initSOS(document.getElementById("btn-sos"), () => userLocation);
 
@@ -90,9 +115,33 @@ function onQuakeDetected(quake, etaSeconds) {
   document.getElementById("qb-distance").textContent = Math.round(quake.distanceKm);
   document.getElementById("qb-source").textContent = quake.source === "DEMO" ? "DEMO MODE" : "USGS (ข้อมูลจริง)";
 
+  showQuakeModal(quake, etaSeconds);
+  playSiren(4000);
+  vibrateAlert();
+
   drawEpicenter(quake, etaSeconds);
   startCountdown(etaSeconds);
 }
+
+function showQuakeModal(quake, etaSeconds) {
+  const modal = document.getElementById("quake-modal");
+  document.getElementById("qm-source").textContent =
+    quake.source === "DEMO" ? "🧪 โหมดจำลอง (DEMO)" : "🔔 ข้อมูลจริงจาก USGS";
+  document.getElementById("qm-place").textContent = quake.place;
+  document.getElementById("qm-mag").textContent = quake.magnitude.toFixed(1);
+  document.getElementById("qm-distance").textContent = Math.round(quake.distanceKm);
+  document.getElementById("qm-eta").textContent =
+    etaSeconds > 0 ? `แรงสั่นอาจถึงในอีก ${etaSeconds} วินาที` : "แรงสั่นอาจถึงแล้ว";
+  modal.classList.add("show");
+
+  // ปิดป๊อบอัพเองถ้าผู้ใช้ไม่กดรับทราบภายใน 15 วินาที (กันค้างจอไว้ตลอดถ้าผู้ใช้ทำอะไรไม่ได้ทันที)
+  clearTimeout(modal._autoClose);
+  modal._autoClose = setTimeout(() => modal.classList.remove("show"), 15000);
+}
+
+document.getElementById("qm-ack").addEventListener("click", () => {
+  document.getElementById("quake-modal").classList.remove("show");
+});
 
 function drawEpicenter(quake, etaSeconds) {
   if (epicenterMarker) map.removeLayer(epicenterMarker);
@@ -164,8 +213,11 @@ async function handleRequestZone() {
     renderRecommendation(currentRecommendation);
     drawRouteTo(currentRecommendation);
 
-    // บันทึกคำขอนี้ไว้วิเคราะห์ (กี่คนขอ, ขอจุดไหน, เช็คอินสำเร็จกี่คน)
+    // บันทึกคำขอนี้ไว้วิเคราะห์ (กี่คนขอ, ขอจุดไหน, เช็คอินสำเร็จกี่คน, เป็นใคร)
     const reqRef = await addDoc(collection(db, "safe_requests"), {
+      userId: userProfile?.userId || null,
+      userName: userProfile?.name || "ไม่ระบุชื่อ",
+      userPhone: userProfile?.phone || null,
       lat: userLocation.lat,
       lng: userLocation.lng,
       recommendedZoneId: currentRecommendation.id,
@@ -235,6 +287,62 @@ async function drawRouteTo(zone) {
     ).addTo(map);
     map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
   }
+}
+
+// -------------------------------------------------------------- นำทางเรียลไทม์
+function startNavigation(zone) {
+  if (!navigator.geolocation) {
+    showToast("อุปกรณ์นี้ไม่รองรับ GPS แบบติดตามตำแหน่ง");
+    return;
+  }
+  navigating = true;
+  document.getElementById("nav-bar").classList.add("show");
+  document.getElementById("nav-zone-name").textContent = `🧭 กำลังไป: ${zone.name}`;
+  updateNavDistance(zone);
+  showToast("เริ่มนำทางแบบเรียลไทม์แล้ว — แผนที่จะอัปเดตตามตำแหน่งของคุณ");
+
+  if (navWatchId !== null) navigator.geolocation.clearWatch(navWatchId);
+  navWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      userLocation.lat = pos.coords.latitude;
+      userLocation.lng = pos.coords.longitude;
+      if (userMarker) userMarker.setLatLng([userLocation.lat, userLocation.lng]);
+
+      updateNavDistance(zone);
+
+      const distM = haversineKm(userLocation.lat, userLocation.lng, zone.lat, zone.lng) * 1000;
+      if (distM <= ARRIVAL_THRESHOLD_M) {
+        triggerArrival(zone);
+      }
+    },
+    (err) => console.warn("watchPosition error:", err),
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+  );
+}
+
+function updateNavDistance(zone) {
+  const distKm = haversineKm(userLocation.lat, userLocation.lng, zone.lat, zone.lng);
+  const distM = Math.round(distKm * 1000);
+  const distText = distM >= 1000 ? `${(distM / 1000).toFixed(2)} กม.` : `${distM} ม.`;
+  const walkMinutes = Math.max(1, Math.round((distKm / 4.5) * 60)); // สมมติเดินเร็ว 4.5 กม./ชม.
+  document.getElementById("nav-distance").textContent = `เหลือ ${distText} · ประมาณ ${walkMinutes} นาที`;
+}
+
+function stopNavigation() {
+  navigating = false;
+  if (navWatchId !== null) {
+    navigator.geolocation.clearWatch(navWatchId);
+    navWatchId = null;
+  }
+  document.getElementById("nav-bar").classList.remove("show");
+}
+
+function triggerArrival(zone) {
+  if (!navigating) return; // กันไม่ให้เด้งซ้ำหลังจากที่ยืนยันไปแล้วรอบหนึ่ง
+  stopNavigation();
+  document.getElementById("arrival-zone-name").textContent = `${zone.emoji || "📍"} ${zone.name}`;
+  document.getElementById("arrival-sheet").classList.add("show");
+  vibrateAlert();
 }
 
 async function handleCheckIn() {

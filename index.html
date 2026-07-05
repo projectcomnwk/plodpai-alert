@@ -13,7 +13,10 @@
   <!-- ================= Top bar ================= -->
   <div class="topbar">
     <div class="brand"><span class="dot"></span> Plodpai Alert</div>
-    <div class="status-pill" id="clock-pill">กำลังโหลด...</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="status-pill" id="btn-profile" style="cursor:pointer">👤 ข้อมูลของฉัน</button>
+      <div class="status-pill" id="clock-pill">กำลังโหลด...</div>
+    </div>
   </div>
 
   <!-- ================= แจ้งเตือนแผ่นดินไหว ================= -->
@@ -42,6 +45,10 @@
       <span>👥 <span id="rec-capacity">-</span></span>
     </div>
     <div class="capacity-bar"><div id="rec-bar" style="width:0%"></div></div>
+    <button class="btn btn-primary" id="btn-navigate" style="width:100%;margin-top:14px;flex-direction:row;gap:8px">
+      <span class="icon" style="font-size:1.1rem">🧭</span>
+      <span class="btn-label">เดินทางไปจุดนี้ (นำทางแบบเรียลไทม์)</span>
+    </button>
   </div>
 
   <!-- ================= ปุ่มการทำงานหลัก ================= -->
@@ -80,6 +87,22 @@
 </div>
 
 <!-- ================= แผงจำลองแผ่นดินไหว ================= -->
+<!-- ================= ป๊อบอัพแจ้งเตือนแผ่นดินไหว ================= -->
+<div class="quake-modal-backdrop" id="quake-modal">
+  <div class="quake-modal">
+    <div class="qm-icon">🚨</div>
+    <h2>ตรวจพบแผ่นดินไหว!</h2>
+    <div class="qm-source" id="qm-source"></div>
+    <div class="qm-place" id="qm-place"></div>
+    <div class="qm-meta">ขนาด <span id="qm-mag"></span> · ห่าง <span id="qm-distance"></span> กม.</div>
+    <div class="qm-eta" id="qm-eta">กำลังคำนวณ...</div>
+    <div class="qm-drop">
+      🛡️ <b>หมอบ-กำบัง-ยึด:</b> หมอบลงกับพื้น หาที่กำบังศีรษะ/ลำตัว และยึดจับไว้จนกว่าแรงสั่นจะหยุด
+    </div>
+    <button class="qm-ack" id="qm-ack">รับทราบ — ปิดหน้าต่างนี้</button>
+  </div>
+</div>
+
 <div class="sheet-backdrop" id="demo-panel">
   <div class="sheet">
     <h3>🧪 จำลองแผ่นดินไหว (Demo Mode)</h3>
@@ -102,6 +125,54 @@
     <button class="status-option injured_minor" data-key="injured_minor"><span class="sw"></span> บาดเจ็บเล็กน้อย ต้องการความช่วยเหลือ</button>
     <button class="status-option helping" data-key="helping"><span class="sw"></span> ช่วยคนอื่นที่ติดอยู่ด้วยกัน</button>
     <button class="sheet-cancel" id="sos-cancel">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- ================= แถบนำทางแบบเรียลไทม์ ================= -->
+<div class="nav-bar" id="nav-bar">
+  <div class="nav-info">
+    <div class="nav-zone" id="nav-zone-name">-</div>
+    <div class="nav-distance" id="nav-distance">-</div>
+  </div>
+  <button class="nav-cancel" id="btn-cancel-nav">✕ ยกเลิก</button>
+</div>
+
+<!-- ================= ป๊อบอัพถึงจุดหมายแล้ว ================= -->
+<div class="sheet-backdrop" id="arrival-sheet">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:2.2rem;margin-bottom:6px">🎉</div>
+    <h3>คุณถึงจุดปลอดภัยแล้ว</h3>
+    <div class="sub" id="arrival-zone-name">-</div>
+    <button class="btn btn-checkin" id="btn-confirm-checkin" style="width:100%;margin:14px 0 8px 0;flex-direction:row;gap:8px">
+      <span class="icon" style="font-size:1.1rem">✅</span>
+      <span class="btn-label">เช็คอินตอนนี้</span>
+    </button>
+    <button class="sheet-cancel" id="arrival-cancel">ยังไม่ถึง / ปิดข้อความนี้</button>
+  </div>
+</div>
+
+<!-- ================= Modal กรอกข้อมูลผู้ใช้ (ก่อนเริ่มใช้งาน) ================= -->
+<div class="quake-modal-backdrop" id="profile-modal">
+  <div class="quake-modal" style="border-color:var(--signal-blue);box-shadow:none;animation:none">
+    <div class="qm-icon">🧑‍🤝‍🧑</div>
+    <h2 style="color:var(--signal-blue)">ก่อนเริ่มใช้งาน กรอกข้อมูลของคุณ</h2>
+    <div style="font-size:0.85rem;color:var(--text-lo);margin-bottom:16px;line-height:1.5">
+      ข้อมูลนี้จะแนบไปกับคำขอความช่วยเหลือ/เช็คอินทุกครั้ง เพื่อให้เจ้าหน้าที่ทราบว่าใครปลอดภัย
+      ใครเกิดอุบัติเหตุ หรือใครติดอยู่ในจุดอันตราย
+    </div>
+    <form id="profile-form" style="text-align:left">
+      <label style="font-size:0.82rem;color:var(--text-lo)">ชื่อ-นามสกุล *</label>
+      <input type="text" id="profile-name" required placeholder="เช่น สมชาย ใจดี"
+        style="width:100%;padding:12px;margin:6px 0 14px 0;border-radius:10px;border:1px solid var(--ink-line);background:var(--ink);color:var(--text-hi);font-family:var(--font-body);font-size:0.95rem" />
+
+      <label style="font-size:0.82rem;color:var(--text-lo)">เบอร์โทรติดต่อ (ไม่บังคับ)</label>
+      <input type="tel" id="profile-phone" placeholder="08x-xxx-xxxx"
+        style="width:100%;padding:12px;margin:6px 0 6px 0;border-radius:10px;border:1px solid var(--ink-line);background:var(--ink);color:var(--text-hi);font-family:var(--font-body);font-size:0.95rem" />
+
+      <div id="profile-error" style="display:none;color:var(--alert-red);font-size:0.8rem;margin:6px 0"></div>
+
+      <button type="submit" class="qm-ack" style="background:var(--signal-blue);margin-top:12px">บันทึกและเริ่มใช้งาน</button>
+    </form>
   </div>
 </div>
 

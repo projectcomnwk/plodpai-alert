@@ -1,0 +1,54 @@
+rules_version = '2';
+
+// ============================================================================
+// Firestore Security Rules — Plodpai Alert
+//
+// ระบบนี้ไม่มีระบบล็อกอิน (ตามที่ตั้งใจไว้ เพื่อให้ผู้ประสบภัยใช้งานได้ทันที
+// โดยไม่ต้องสมัครสมาชิก) ดังนั้นกฎนี้เปิดให้ "อ่าน" และ "เขียนเฉพาะฟิลด์ที่กำหนด"
+// ได้แบบสาธารณะ แต่ป้องกันการแก้ไข/ลบข้อมูลของคนอื่นแบบเสรี
+//
+// ก่อน deploy ใช้งานจริงกับสาธารณะในวงกว้าง แนะนำเพิ่ม:
+//   - Firebase App Check (ป้องกัน bot/สคริปต์ยิง request ปลอม)
+//   - Rate limiting ผ่าน Cloud Functions
+// ============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ----- คำขอ SOS -----
+    match /sos_alerts/{id} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['lat', 'lng', 'status', 'resolved'])
+                    && request.resource.data.lat is number
+                    && request.resource.data.lng is number
+                    && request.resource.data.status in
+                       ['trapped', 'injured_severe', 'injured_minor', 'helping'];
+      // อนุญาตให้แก้ได้แค่ฟิลด์สถานะรับเรื่อง/ปลอดภัยแล้ว เท่านั้น (จากฝั่ง dashboard)
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['resolved', 'resolvedAt', 'acknowledged']);
+      allow delete: if false;
+    }
+
+    // ----- ความจุปัจจุบันของแต่ละจุดปลอดภัย -----
+    match /zone_state/{id} {
+      allow read: if true;
+      allow write: if true; // ต้องเปิดกว้างเพราะ transaction เพิ่มยอดจากฝั่ง client
+    }
+
+    // ----- คำขอ "ขอจุดปลอดภัย" ของผู้ใช้แต่ละครั้ง -----
+    match /safe_requests/{id} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['checkedIn', 'checkInTime']);
+      allow delete: if false;
+    }
+
+    // ----- ประวัติเหตุการณ์แผ่นดินไหว (ทั้งจริงและ demo) -----
+    match /quake_events/{id} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if false; // ประวัติต้องไม่ถูกแก้ไขย้อนหลัง
+    }
+  }
+}

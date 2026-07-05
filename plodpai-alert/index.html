@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Plodpai Alert — ระบบแจ้งเตือนภัยพิบัติและนำทางสู่จุดปลอดภัย</title>
+<link rel="stylesheet" href="css/style.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ================= Top bar ================= -->
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> Plodpai Alert</div>
+    <div class="status-pill" id="clock-pill">กำลังโหลด...</div>
+  </div>
+
+  <!-- ================= แจ้งเตือนแผ่นดินไหว ================= -->
+  <div id="quake-banner">
+    <div class="qb-title">🔔 ตรวจพบแผ่นดินไหว <span id="qb-source" class="mono" style="font-size:0.7rem;opacity:0.8"></span></div>
+    <div class="qb-meta">
+      <span>📍 <span id="qb-place"></span></span>
+      <span>ขนาด <span id="qb-mag"></span></span>
+      <span>ห่าง <span id="qb-distance"></span> กม.</span>
+    </div>
+    <div class="qb-eta" id="qb-eta">กำลังคำนวณ...</div>
+    <div class="qb-drop">
+      🛡️ <b>หมอบ-กำบัง-ยึด (Drop-Cover-Hold):</b> หมอบลงกับพื้น หาโต๊ะแข็งแรงกำบังศีรษะ/ลำตัว และยึดจับไว้จนกว่าแรงสั่นจะหยุด แล้วค่อยกดปุ่ม "ขอจุดปลอดภัย" ด้านล่าง
+    </div>
+  </div>
+
+  <!-- ================= แผนที่ ================= -->
+  <div id="map"></div>
+
+  <!-- ================= คำแนะนำจุดปลอดภัย ================= -->
+  <div class="panel recommend-card" id="recommend-card">
+    <h2>จุดปลอดภัยที่แนะนำสำหรับคุณ</h2>
+    <div class="zone-name" id="rec-name">-</div>
+    <div class="zone-stats">
+      <span>📏 <span id="rec-distance">-</span></span>
+      <span>👥 <span id="rec-capacity">-</span></span>
+    </div>
+    <div class="capacity-bar"><div id="rec-bar" style="width:0%"></div></div>
+  </div>
+
+  <!-- ================= ปุ่มการทำงานหลัก ================= -->
+  <div class="action-grid">
+    <button class="btn btn-primary full-width" id="btn-request-zone">
+      <span class="icon">🛡️</span>
+      <span class="btn-label">ขอจุดปลอดภัย</span>
+    </button>
+
+    <button class="btn btn-checkin full-width" id="btn-checkin" disabled>
+      <span class="icon">📍</span>
+      <span class="btn-label">เช็คอิน — ฉันถึงแล้ว</span>
+    </button>
+
+    <button class="btn btn-sos full-width" id="btn-sos">
+      <div class="hold-fill"></div>
+      <span class="icon btn-label">🆘</span>
+      <span class="btn-label">กดค้าง 3 วิ เพื่อขอความช่วยเหลือ (SOS)</span>
+    </button>
+
+    <button class="btn btn-demo" id="btn-demo">
+      <span class="icon">🧪</span>
+      <span class="btn-label">จำลองแผ่นดินไหว (Demo)</span>
+    </button>
+
+    <button class="btn btn-demo" id="btn-wide-mode" style="font-size:0.78rem">
+      🌏 เปิดโหมดขยายพื้นที่ (พิสูจน์ข้อมูลจริงจาก USGS)
+    </button>
+  </div>
+
+  <div class="footnote">
+    ระบบดึงข้อมูลแผ่นดินไหวจาก USGS Earthquake API แบบเรียลไทม์ และดึงจุดปลอดภัยจาก OpenStreetMap
+    โหมด "จำลองแผ่นดินไหว" ใช้สำหรับสาธิตเท่านั้น ข้อมูลจะถูกบันทึกแยกจากข้อมูลจริง (source: DEMO)
+    <br />ดู Dashboard สำหรับหน่วยกู้ภัย: <a href="dashboard.html">dashboard.html</a>
+  </div>
+</div>
+
+<!-- ================= แผงจำลองแผ่นดินไหว ================= -->
+<div class="sheet-backdrop" id="demo-panel">
+  <div class="sheet">
+    <h3>🧪 จำลองแผ่นดินไหว (Demo Mode)</h3>
+    <div class="sub">สำหรับสาธิตระบบ ไม่ใช่ข้อมูลแผ่นดินไหวจริง — จะถูกติดป้าย DEMO ในฐานข้อมูลเสมอ</div>
+    <label style="font-size:0.85rem;color:var(--text-lo)">ขนาดแผ่นดินไหว (Magnitude)</label>
+    <input type="range" id="demo-magnitude" min="4.0" max="8.5" step="0.1" value="6.5" style="width:100%;margin:10px 0" />
+    <div class="mono" style="text-align:center;font-size:1.3rem;margin-bottom:14px" id="demo-mag-display">6.5</div>
+    <button class="status-option trapped" id="demo-run" style="justify-content:center;font-weight:600">▶️ เริ่มจำลอง ณ ตำแหน่งปัจจุบัน</button>
+    <button class="sheet-cancel" id="demo-cancel">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- ================= แผง SOS เลือกสถานะ ================= -->
+<div class="sheet-backdrop" id="sos-sheet">
+  <div class="sheet">
+    <h3>🆘 เลือกสถานะของคุณ</h3>
+    <div class="sub">ระบบจะส่งพิกัด GPS และระดับแบตเตอรี่ให้เจ้าหน้าที่ทันที</div>
+    <button class="status-option trapped" data-key="trapped"><span class="sw"></span> ติดอยู่ ออกไม่ได้</button>
+    <button class="status-option injured_severe" data-key="injured_severe"><span class="sw"></span> บาดเจ็บ เดินไม่ได้</button>
+    <button class="status-option injured_minor" data-key="injured_minor"><span class="sw"></span> บาดเจ็บเล็กน้อย ต้องการความช่วยเหลือ</button>
+    <button class="status-option helping" data-key="helping"><span class="sw"></span> ช่วยคนอื่นที่ติดอยู่ด้วยกัน</button>
+    <button class="sheet-cancel" id="sos-cancel">ยกเลิก</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module" src="js/app.js"></script>
+<script>
+  // นาฬิกาบน topbar + แสดงค่า magnitude แบบ real-time
+  function tickClock() {
+    document.getElementById("clock-pill").textContent = new Date().toLocaleTimeString("th-TH");
+  }
+  setInterval(tickClock, 1000); tickClock();
+
+  document.getElementById("demo-magnitude").addEventListener("input", (e) => {
+    document.getElementById("demo-mag-display").textContent = parseFloat(e.target.value).toFixed(1);
+  });
+</script>
+</body>
+</html>

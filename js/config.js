@@ -11,13 +11,16 @@ import {
   addDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
   onSnapshot,
   query,
   where,
   orderBy,
   serverTimestamp,
   runTransaction,
-  getDoc
+  getDoc,
+  getDocs,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   getAuth,
@@ -43,6 +46,7 @@ const auth = getAuth(app);
 
 // ส่งออกทุกอย่างที่ไฟล์อื่นในระบบต้องใช้ (import { db, collection, ... } from "./config.js")
 export {
+  firebaseConfig,
   db,
   auth,
   collection,
@@ -50,6 +54,7 @@ export {
   addDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
   onSnapshot,
   query,
   where,
@@ -57,6 +62,8 @@ export {
   serverTimestamp,
   runTransaction,
   getDoc,
+  getDocs,
+  writeBatch,
   signInWithEmailAndPassword,
   onAuthStateChanged,
   signOut

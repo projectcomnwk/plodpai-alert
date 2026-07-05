@@ -33,67 +33,158 @@
       </button>
     </form>
     <div style="text-align:center;font-size:0.75rem;color:#94A3B8;margin-top:16px">
-      บัญชีนี้ต้องถูกสร้างไว้ล่วงหน้าโดยผู้ดูแลระบบผ่าน Firebase Console
+      บัญชีนี้ต้องถูกสร้างไว้ล่วงหน้าโดย Admin เท่านั้น
     </div>
   </div>
 </div>
 
-<!-- ================= Dashboard เต็มรูปแบบ (แสดงหลังล็อกอินสำเร็จ) ================= -->
+<!-- ================= Dashboard (แสดงหลังล็อกอินสำเร็จ) ================= -->
 <div id="dashboard-screen" style="display:none">
   <div class="app-shell">
     <div class="topbar">
-      <div class="brand"><span class="dot"></span> Plodpai Alert — Admin</div>
+      <div class="brand"><span class="dot"></span> Plodpai Alert</div>
       <div style="display:flex;gap:8px;align-items:center">
+        <span class="status-pill" id="role-badge" style="font-size:0.72rem">-</span>
         <span class="status-pill" id="whoami" style="font-size:0.72rem">-</span>
         <button class="status-pill" id="btn-logout" style="cursor:pointer">ออกจากระบบ</button>
         <div class="status-pill" id="clock-pill">-</div>
       </div>
     </div>
 
-    <div class="dash-grid">
-      <div class="dash-card">
-        <div id="map"></div>
-      </div>
+    <!-- ================= แท็บ ================= -->
+    <div style="display:flex;gap:8px;padding:14px 18px 0 18px" id="tab-bar">
+      <button class="tab-btn active" data-tab="current">📍 ภาพรวมปัจจุบัน</button>
+      <button class="tab-btn admin-only" data-tab="history">🗂️ ประวัติ/Log</button>
+      <button class="tab-btn admin-only" data-tab="users">👥 จัดการผู้ใช้</button>
+    </div>
 
-      <div>
+    <!-- ================= แท็บ: ภาพรวมปัจจุบัน ================= -->
+    <div class="tab-panel" id="tab-current">
+      <div class="dash-grid">
+        <div class="dash-card">
+          <div id="map"></div>
+        </div>
+
+        <div>
+          <div class="dash-card admin-only" style="margin-bottom:14px;border-color:var(--alert-red)">
+            <h2 style="font-size:0.9rem;margin-bottom:8px;color:var(--alert-red)">🧹 เคลียร์ Dashboard</h2>
+            <div style="font-size:0.78rem;color:#6B7A8F;margin-bottom:10px;line-height:1.5">
+              ล้างจุดบน Dashboard สาธารณะและมุมมอง "ภาพรวมปัจจุบัน" ของหน่วยกู้ภัยทั้งหมด
+              (ข้อมูลเต็มรูปแบบยังเก็บไว้ดูย้อนหลังได้ในแท็บ "ประวัติ/Log")
+            </div>
+            <button id="btn-clear-dashboard" style="width:100%;padding:11px;border:none;border-radius:10px;background:var(--alert-red);color:#fff;font-family:var(--font-display);font-weight:600;cursor:pointer">
+              เคลียร์ข้อมูลตอนนี้
+            </button>
+            <div style="font-size:0.72rem;color:#94A3B8;margin-top:6px" id="last-cleared-info"></div>
+          </div>
+
+          <div class="dash-card" style="margin-bottom:14px">
+            <div class="stat-row">
+              <div class="stat-box danger">
+                <div class="num" id="stat-sos-pending">0</div>
+                <div class="lbl">SOS ค้างอยู่</div>
+              </div>
+              <div class="stat-box">
+                <div class="num" id="stat-requests">0</div>
+                <div class="lbl">คนขอจุดปลอดภัย</div>
+              </div>
+              <div class="stat-box ok">
+                <div class="num" id="stat-checkins">0</div>
+                <div class="lbl">เช็คอินแล้ว</div>
+              </div>
+              <div class="stat-box warn">
+                <div class="num" id="stat-not-arrived">0</div>
+                <div class="lbl">ยังไม่ถึง</div>
+              </div>
+              <div class="stat-box">
+                <div class="num" id="stat-total-people">0</div>
+                <div class="lbl">คนในจุดปลอดภัยทั้งหมด</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dash-card" style="margin-bottom:14px">
+            <h2 style="font-size:0.95rem;margin-bottom:10px">🆘 คำขอความช่วยเหลือ (ชื่อ-เบอร์โทร)</h2>
+            <div id="sos-list"></div>
+          </div>
+
+          <div class="dash-card" style="margin-bottom:14px">
+            <h2 style="font-size:0.95rem;margin-bottom:10px">📍 รายงานพิกัด/สถานะที่ผู้ใช้แจ้งเอง</h2>
+            <div id="report-list"></div>
+          </div>
+
+          <div class="dash-card">
+            <h2 style="font-size:0.95rem;margin-bottom:10px">✅ รายชื่อผู้ปลอดภัย (เช็คอินล่าสุดก่อน)</h2>
+            <div id="safe-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= แท็บ: ประวัติ/Log (Admin เท่านั้น) ================= -->
+    <div class="tab-panel" id="tab-history" style="display:none">
+      <div style="padding:14px 18px">
         <div class="dash-card" style="margin-bottom:14px">
-          <div class="stat-row">
-            <div class="stat-box danger">
-              <div class="num" id="stat-sos-pending">0</div>
-              <div class="lbl">SOS ค้างอยู่</div>
-            </div>
-            <div class="stat-box">
-              <div class="num" id="stat-requests">0</div>
-              <div class="lbl">คนขอจุดปลอดภัย</div>
-            </div>
-            <div class="stat-box ok">
-              <div class="num" id="stat-checkins">0</div>
-              <div class="lbl">เช็คอินแล้ว</div>
-            </div>
-            <div class="stat-box warn">
-              <div class="num" id="stat-not-arrived">0</div>
-              <div class="lbl">ยังไม่ถึง</div>
-            </div>
-            <div class="stat-box">
-              <div class="num" id="stat-total-people">0</div>
-              <div class="lbl">คนในจุดปลอดภัยทั้งหมด</div>
-            </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span style="font-size:0.85rem;color:#6B7A8F">แสดงข้อมูลย้อนหลัง:</span>
+            <select id="history-range" style="padding:8px 12px;border-radius:8px;border:1px solid #D7DEE8;font-size:0.85rem">
+              <option value="1">วันนี้</option>
+              <option value="7" selected>7 วันที่ผ่านมา</option>
+              <option value="30">30 วันที่ผ่านมา</option>
+              <option value="0">ทั้งหมด</option>
+            </select>
           </div>
         </div>
 
         <div class="dash-card" style="margin-bottom:14px">
-          <h2 style="font-size:0.95rem;margin-bottom:10px">🆘 คำขอความช่วยเหลือ (ชื่อ-เบอร์โทร)</h2>
-          <div id="sos-list"></div>
+          <h2 style="font-size:0.95rem;margin-bottom:10px">🆘 ประวัติ SOS ทั้งหมด (รวมที่ปิดเคสแล้ว)</h2>
+          <div id="history-sos-list"></div>
         </div>
 
         <div class="dash-card" style="margin-bottom:14px">
-          <h2 style="font-size:0.95rem;margin-bottom:10px">📍 รายงานพิกัด/สถานะที่ผู้ใช้แจ้งเอง</h2>
-          <div id="report-list"></div>
+          <h2 style="font-size:0.95rem;margin-bottom:10px">📍 ประวัติรายงานพิกัด/สถานะ</h2>
+          <div id="history-report-list"></div>
         </div>
 
         <div class="dash-card">
-          <h2 style="font-size:0.95rem;margin-bottom:10px">✅ รายชื่อผู้ปลอดภัย (เช็คอินล่าสุดก่อน)</h2>
-          <div id="safe-list"></div>
+          <h2 style="font-size:0.95rem;margin-bottom:10px">✅ ประวัติผู้เช็คอินปลอดภัย</h2>
+          <div id="history-safe-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= แท็บ: จัดการผู้ใช้ (Admin เท่านั้น) ================= -->
+    <div class="tab-panel" id="tab-users" style="display:none">
+      <div style="padding:14px 18px">
+        <div class="dash-card" style="margin-bottom:14px">
+          <h2 style="font-size:0.95rem;margin-bottom:12px">➕ เพิ่มบัญชีหน่วยกู้ภัยใหม่</h2>
+          <form id="add-user-form">
+            <label style="font-size:0.82rem;color:#6B7A8F">อีเมล</label>
+            <input type="email" id="new-user-email" required placeholder="rescue1@plodpai.local"
+              style="width:100%;padding:11px;margin:6px 0 12px 0;border-radius:8px;border:1px solid #D7DEE8;font-size:0.9rem" />
+
+            <label style="font-size:0.82rem;color:#6B7A8F">รหัสผ่าน (อย่างน้อย 6 ตัวอักษร)</label>
+            <input type="password" id="new-user-password" required minlength="6" placeholder="••••••••"
+              style="width:100%;padding:11px;margin:6px 0 12px 0;border-radius:8px;border:1px solid #D7DEE8;font-size:0.9rem" />
+
+            <label style="font-size:0.82rem;color:#6B7A8F">บทบาท</label>
+            <select id="new-user-role" style="width:100%;padding:11px;margin:6px 0 12px 0;border-radius:8px;border:1px solid #D7DEE8;font-size:0.9rem">
+              <option value="rescue">หน่วยกู้ภัย (Rescue)</option>
+              <option value="admin">Admin</option>
+            </select>
+
+            <div id="add-user-error" style="display:none;color:var(--alert-red);font-size:0.82rem;margin-bottom:10px"></div>
+            <div id="add-user-success" style="display:none;color:#1F8F63;font-size:0.82rem;margin-bottom:10px"></div>
+
+            <button type="submit" style="width:100%;padding:12px;border:none;border-radius:8px;background:#1B2534;color:#fff;font-family:var(--font-display);font-weight:600;cursor:pointer">
+              สร้างบัญชี
+            </button>
+          </form>
+        </div>
+
+        <div class="dash-card">
+          <h2 style="font-size:0.95rem;margin-bottom:10px">👥 รายชื่อผู้ใช้ในระบบ</h2>
+          <div id="user-list"></div>
         </div>
       </div>
     </div>
@@ -104,6 +195,8 @@
     </div>
   </div>
 </div>
+
+<div id="toast"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script type="module" src="js/admin.js"></script>

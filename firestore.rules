@@ -3,64 +3,98 @@ rules_version = '2';
 // ============================================================================
 // Firestore Security Rules — Plodpai Alert
 //
-// หลักการ: แยกข้อมูลเป็น 2 ชั้นชัดเจน
-//   1) คอลเลกชันที่มีข้อมูลส่วนบุคคล (ชื่อ, เบอร์โทร, พิกัดผูกกับตัวบุคคล)
-//      → "อ่าน" ได้เฉพาะผู้ที่ล็อกอินแล้วเท่านั้น (Admin/หน่วยกู้ภัย ผ่านหน้า admin.html)
-//      → "เขียน/สร้าง" ยังเปิดให้สาธารณะทำได้ เพราะผู้ประสบภัยต้องส่งคำขอได้โดยไม่ต้องสมัครสมาชิก
-//   2) คอลเลกชันสาธารณะ (public_pins, zone_state, quake_events) ไม่มี PII ติดอยู่เลย
-//      → เปิดอ่าน/เขียนได้แบบสาธารณะ ใช้แสดงผลใน dashboard.html (หน้าสาธารณะ)
+// ระบบสิทธิ์ 3 ระดับ:
+//   1) สาธารณะ (ไม่ล็อกอิน) — อ่าน public_pins, zone_state, quake_events, system ได้
+//      (ไม่มี PII ในคอลเลกชันเหล่านี้เลย)
+//   2) Staff (role = admin หรือ rescue) — อ่านข้อมูลเต็มรูปแบบ (มีชื่อ/เบอร์โทร) ได้
+//      และรับเรื่อง/ปิดเคส SOS ได้
+//   3) Admin เท่านั้น (role = admin) — จัดการบัญชีผู้ใช้ (roles) และเคลียร์ Dashboard ได้
 //
-// ก่อน deploy ใช้งานจริงกับสาธารณะในวงกว้าง แนะนำเพิ่ม Firebase App Check
-// เพื่อป้องกัน bot/สคริปต์ยิง request ปลอมเข้าคอลเลกชันสาธารณะ
+// บทบาทของแต่ละคนเก็บไว้ในคอลเลกชัน roles/{uid} — ต้องสร้างเอกสาร roles/{uid}
+// ของ Admin คนแรกด้วยตนเองผ่าน Firebase Console (ดูขั้นตอนใน README.md)
 // ============================================================================
+
+function isSignedIn() {
+  return request.auth != null;
+}
+
+function myRole() {
+  return get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.role;
+}
+
+function isStaff() {
+  return isSignedIn() &&
+    exists(/databases/$(database)/documents/roles/$(request.auth.uid)) &&
+    myRole() in ['admin', 'rescue'];
+}
+
+function isAdmin() {
+  return isSignedIn() &&
+    exists(/databases/$(database)/documents/roles/$(request.auth.uid)) &&
+    myRole() == 'admin';
+}
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ----- บทบาทผู้ใช้ (admin / rescue) — จัดการได้เฉพาะ Admin -----
+    match /roles/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // ----- สถานะเคลียร์ Dashboard (ไม่มี PII เปิดอ่านสาธารณะได้) -----
+    match /system/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // ----- คำขอ SOS (มีชื่อ/เบอร์โทร) -----
     match /sos_alerts/{id} {
-      allow read: if request.auth != null; // เฉพาะ Admin/หน่วยกู้ภัยที่ล็อกอินแล้ว
+      allow read: if isStaff();
       allow create: if request.resource.data.keys().hasAll(['lat', 'lng', 'status', 'resolved'])
                     && request.resource.data.lat is number
                     && request.resource.data.lng is number
                     && request.resource.data.status in
                        ['trapped', 'injured_severe', 'injured_minor', 'helping'];
-      // resolve/acknowledge ทำได้เฉพาะ Admin ที่ล็อกอินแล้วเท่านั้น
-      allow update: if request.auth != null
+      allow update: if isStaff()
                     && request.resource.data.diff(resource.data).affectedKeys()
                        .hasOnly(['resolved', 'resolvedAt', 'acknowledged']);
-      allow delete: if false;
+      allow delete: if isAdmin();
     }
 
     // ----- คำขอ "ขอจุดปลอดภัย" ของผู้ใช้ (มีชื่อ/เบอร์โทร) -----
     match /safe_requests/{id} {
-      allow read: if request.auth != null;
+      allow read: if isStaff();
       allow create: if true;
       // ผู้ใช้อัปเดตสถานะเช็คอินของ "เอกสารตัวเอง" ได้โดยไม่ต้องล็อกอิน (รู้แค่ id ของตัวเอง)
       allow update: if request.resource.data.diff(resource.data).affectedKeys()
                        .hasOnly(['checkedIn', 'checkInTime']);
-      allow delete: if false;
+      allow delete: if isAdmin();
     }
 
     // ----- รายงานพิกัด/สถานะที่ผู้ใช้แจ้งเอง (มีชื่อ/เบอร์โทร) -----
     match /status_reports/{id} {
-      allow read: if request.auth != null;
+      allow read: if isStaff();
       allow create: if true;
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
     // ----- จุดสาธารณะ (ไม่มีชื่อ/เบอร์โทร) ใช้แสดงบน Dashboard สาธารณะ -----
     match /public_pins/{id} {
-      allow read: if true; // ไม่มี PII เปิดอ่านสาธารณะได้อย่างปลอดภัย
+      allow read: if true;
       allow create: if true;
-      allow update: if request.auth != null; // เฉพาะ Admin แก้สถานะ (เช่น resolve SOS)
-      allow delete: if false;
+      allow update: if isStaff();
+      allow delete: if isAdmin(); // ใช้ตอนกด "เคลียร์ Dashboard"
     }
 
     // ----- ความจุปัจจุบันของแต่ละจุดปลอดภัย (ไม่มี PII) -----
     match /zone_state/{id} {
       allow read: if true;
-      allow write: if true; // ต้องเปิดกว้างเพราะ transaction เพิ่มยอดจากฝั่ง client
+      allow create: if true;
+      allow update: if true; // transaction เพิ่มยอดจากฝั่ง client
+      allow delete: if isAdmin(); // ใช้ตอนกด "เคลียร์ Dashboard"
     }
 
     // ----- ประวัติเหตุการณ์แผ่นดินไหว (ไม่มี PII) -----

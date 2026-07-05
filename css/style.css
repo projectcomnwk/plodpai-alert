@@ -533,6 +533,28 @@ a { color: var(--signal-blue); }
 /* กันไม่ให้ nav-bar บังปุ่ม/เนื้อหาด้านล่างสุดของหน้า */
 .app-shell { padding-bottom: 140px; }
 
+/* ============================== Admin tabs ================================ */
+
+.tab-btn {
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 10px 16px;
+  border: 1px solid #E3E8EF;
+  background: #fff;
+  color: #6B7A8F;
+  border-radius: 10px 10px 0 0;
+  cursor: pointer;
+  border-bottom: none;
+}
+.tab-btn.active {
+  background: #F7F9FC;
+  color: #1B2534;
+  border-bottom: 2px solid var(--signal-blue);
+}
+.tab-panel { padding-top: 4px; }
+.hidden-role { display: none !important; }
+
 /* ============================== Footer note =============================== */
 
 .footnote {

@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Plodpai Alert — ระบบแจ้งเตือนภัยพิบัติและนำทางสู่จุดปลอดภัย</title>
 <link rel="stylesheet" href="css/style.css" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 </head>
 <body>
 <div class="app-shell">
@@ -197,7 +196,17 @@
 
 <div id="toast"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!--
+  Google Maps JavaScript API loader (ทางการจาก Google)
+  ต้องใส่ API Key ของตัวเอง — ดูวิธีขอคีย์ใน README.md หัวข้อ "ตั้งค่า Google Maps"
+  ตอนนี้ใส่ placeholder ไว้ก่อน แอปจะยังใช้งานไม่ได้จนกว่าจะใส่คีย์จริง
+-->
+<script>
+  (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({
+    key: "YOUR_GOOGLE_MAPS_API_KEY",
+    v: "weekly"
+  });
+</script>
 <script type="module" src="js/app.js"></script>
 <script>
   // นาฬิกาบน topbar + แสดงค่า magnitude แบบ real-time

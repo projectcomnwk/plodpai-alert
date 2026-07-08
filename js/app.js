@@ -1,9 +1,9 @@
 // ============================================================================
 // app.js — ไฟล์หลักของหน้า index.html
-// เชื่อมแผนที่ + quake.js + safezone.js + sos.js เข้าด้วยกัน
+// เชื่อมแผนที่ (Google Maps) + quake.js + safezone.js + sos.js เข้าด้วยกัน
 // ============================================================================
 
-import { getUserLocation, showToast, formatClock, FALLBACK_LOCATION, haversineKm } from "./utils.js";
+import { getUserLocation, showToast, FALLBACK_LOCATION, haversineKm } from "./utils.js";
 import { initQuakeWatcher, setWideMode, simulateQuake } from "./quake.js";
 import { fetchNearbySafeZones, scoreZones, fetchWalkingRoute, checkInToZone } from "./safezone.js";
 import { initSOS, getStatusOptions, submitSOS, closeStatusSheet } from "./sos.js";
@@ -12,15 +12,24 @@ import { db, collection, doc, setDoc, updateDoc, serverTimestamp } from "./confi
 import { playSiren, vibrateAlert } from "./sound.js";
 import { ensureProfile, openProfileModal, getProfile } from "./profile.js";
 
-let map, userMarker, epicenterCircle, epicenterMarker, routeLine;
+// ต้องสร้าง Map ID ของตัวเองฟรีที่ Google Cloud Console (Maps Management > Map IDs)
+// ถ้ายังไม่ได้สร้าง ใช้ "DEMO_MAP_ID" ทดสอบได้ชั่วคราว (จะมีลายน้ำ "for development purposes only")
+const GOOGLE_MAPS_MAP_ID = "DEMO_MAP_ID";
+
+let map, infoWindow;
+let AdvancedMarkerElement;
+let userMarker, epicenterMarker, epicenterCircle, routeLine, waveTimer;
 const zoneMarkers = new Map();
+
 let userLocation = null;
 let userProfile = null; // { userId, name, phone } — กรอกครั้งแรกแล้วเก็บไว้ในเครื่อง
 let currentRecommendation = null; // จุดที่ระบบแนะนำล่าสุด (ไว้ใช้ตอนกดเช็คอิน)
 let currentRequestId = null; // id ของเอกสาร safe_requests ล่าสุด (ไว้ผูกกับการเช็คอิน)
 let quakeCountdownTimer = null;
-let navWatchId = null; // watchPosition id ตอนกำลังนำทาง
+
+let liveWatchId = null; // watchPosition id — ทำงานตลอดตั้งแต่เปิดแอป ไม่ใช่แค่ตอนนำทาง
 let navigating = false;
+let navigationTargetZone = null;
 const ARRIVAL_THRESHOLD_M = 40; // ถือว่า "ถึงแล้ว" เมื่อห่างจุดหมายไม่เกินนี้ (เมตร)
 
 async function main() {
@@ -31,24 +40,76 @@ async function main() {
     showToast("ไม่พบสัญญาณ GPS — ใช้ตำแหน่งสำรอง (โรงเรียนหนองหินวิทยาคม)");
   }
 
-  initMap();
+  await initMap();
+  startLiveTracking(); // เริ่มติดตามตำแหน่งเป็นจุดแดงแบบเรียลไทม์ทันที (ไม่ต้องรอกดนำทาง)
   initQuakeWatcher(userLocation, onQuakeDetected);
   initReport(() => userLocation);
   wireButtons();
 }
 
-function initMap() {
-  map = L.map("map", { zoomControl: false }).setView([userLocation.lat, userLocation.lng], 14);
-  L.control.zoom({ position: "bottomright" }).addTo(map);
+// ---------------------------------------------------------------- แผนที่ (Google Maps)
+async function initMap() {
+  const { Map, InfoWindow } = await google.maps.importLibrary("maps");
+  const markerLib = await google.maps.importLibrary("marker");
+  AdvancedMarkerElement = markerLib.AdvancedMarkerElement;
 
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "© OpenStreetMap contributors"
-  }).addTo(map);
+  map = new Map(document.getElementById("map"), {
+    center: { lat: userLocation.lat, lng: userLocation.lng },
+    zoom: 15,
+    mapId: GOOGLE_MAPS_MAP_ID,
+    disableDefaultUI: false,
+    zoomControl: true,
+    streetViewControl: false,
+    mapTypeControl: false,
+    fullscreenControl: false
+  });
 
-  userMarker = L.marker([userLocation.lat, userLocation.lng], {
-    icon: L.divIcon({ className: "", html: '<div style="font-size:22px">📍</div>', iconSize: [24, 24] })
-  }).addTo(map).bindPopup("ตำแหน่งของคุณ");
+  infoWindow = new InfoWindow();
+
+  // จุดแดง = ตำแหน่งของผู้ใช้ อัปเดตแบบเรียลไทม์ผ่าน startLiveTracking()
+  userMarker = new AdvancedMarkerElement({
+    map,
+    position: { lat: userLocation.lat, lng: userLocation.lng },
+    content: elementFromHTML('<div class="live-dot"></div>'),
+    zIndex: 999,
+    title: "ตำแหน่งของคุณ (อัปเดตสด)"
+  });
+}
+
+function elementFromHTML(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html.trim();
+  return div.firstElementChild;
+}
+
+// ---------------------------------------------------------------- ติดตามตำแหน่งจริงตลอดเวลา
+function startLiveTracking() {
+  if (!navigator.geolocation) {
+    showToast("อุปกรณ์นี้ไม่รองรับ GPS แบบติดตามตำแหน่ง");
+    return;
+  }
+  if (liveWatchId !== null) navigator.geolocation.clearWatch(liveWatchId);
+
+  liveWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      userLocation.lat = pos.coords.latitude;
+      userLocation.lng = pos.coords.longitude;
+      userLocation.isFallback = false;
+
+      if (userMarker) userMarker.position = { lat: userLocation.lat, lng: userLocation.lng };
+
+      // ถ้ากำลังนำทางอยู่ ให้อัปเดตระยะทาง + เช็คว่าถึงจุดหมายหรือยังไปด้วยในตัว
+      if (navigating && navigationTargetZone) {
+        updateNavDistance(navigationTargetZone);
+        const distM = haversineKm(userLocation.lat, userLocation.lng, navigationTargetZone.lat, navigationTargetZone.lng) * 1000;
+        if (distM <= ARRIVAL_THRESHOLD_M) {
+          triggerArrival(navigationTargetZone);
+        }
+      }
+    },
+    (err) => console.warn("watchPosition error:", err),
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+  );
 }
 
 // ------------------------------------------------------------------ ปุ่มต่างๆ
@@ -142,7 +203,6 @@ function showQuakeModal(quake, etaSeconds) {
     etaSeconds > 0 ? `แรงสั่นอาจถึงในอีก ${etaSeconds} วินาที` : "แรงสั่นอาจถึงแล้ว";
   modal.classList.add("show");
 
-  // ปิดป๊อบอัพเองถ้าผู้ใช้ไม่กดรับทราบภายใน 15 วินาที (กันค้างจอไว้ตลอดถ้าผู้ใช้ทำอะไรไม่ได้ทันที)
   clearTimeout(modal._autoClose);
   modal._autoClose = setTimeout(() => modal.classList.remove("show"), 15000);
 }
@@ -151,49 +211,56 @@ document.getElementById("qm-ack").addEventListener("click", () => {
   document.getElementById("quake-modal").classList.remove("show");
 });
 
-function drawEpicenter(quake, etaSeconds) {
-  if (epicenterMarker) map.removeLayer(epicenterMarker);
-  if (epicenterCircle) map.removeLayer(epicenterCircle);
+function drawEpicenter(quake) {
+  if (epicenterMarker) epicenterMarker.map = null;
+  if (epicenterCircle) epicenterCircle.setMap(null);
 
-  epicenterMarker = L.marker([quake.lat, quake.lng], {
-    icon: L.divIcon({ className: "", html: '<div class="pulse-marker"></div>', iconSize: [16, 16] })
-  }).addTo(map).bindPopup(`ศูนย์กลาง: ${quake.place}<br>ขนาด ${quake.magnitude}`);
+  epicenterMarker = new AdvancedMarkerElement({
+    map,
+    position: { lat: quake.lat, lng: quake.lng },
+    content: elementFromHTML('<div class="pulse-marker"></div>')
+  });
+  epicenterMarker.addListener("click", () => {
+    infoWindow.setContent(`ศูนย์กลาง: ${quake.place}<br>ขนาด ${quake.magnitude}`);
+    infoWindow.open({ anchor: epicenterMarker, map });
+  });
 
-  epicenterCircle = L.circle([quake.lat, quake.lng], {
+  epicenterCircle = new google.maps.Circle({
+    map,
+    center: { lat: quake.lat, lng: quake.lng },
     radius: 1000,
-    color: "#E5484D",
-    weight: 1,
+    strokeColor: "#E5484D",
+    strokeWeight: 1,
+    fillColor: "#E5484D",
     fillOpacity: 0.05
-  }).addTo(map);
+  });
 
   // แสดงคลื่นสั่นสะเทือนที่ขยายตัวไปตามเวลาจริง (สื่อฟิสิกส์ของคลื่น S)
   const startTime = Date.now();
   const speedMs = 3500; // ม./วินาที
-  clearInterval(quakeCountdownTimer?.waveTimer);
-  const waveTimer = setInterval(() => {
+  clearInterval(waveTimer);
+  waveTimer = setInterval(() => {
     const elapsedSec = (Date.now() - startTime) / 1000;
     epicenterCircle.setRadius(Math.min(elapsedSec * speedMs, 3000000));
   }, 200);
-  if (quakeCountdownTimer) quakeCountdownTimer.waveTimer = waveTimer;
 }
 
 function startCountdown(etaSeconds) {
-  clearInterval(quakeCountdownTimer?.timer);
+  clearInterval(quakeCountdownTimer);
   let remaining = etaSeconds;
   const etaEl = document.getElementById("qb-eta");
 
   function tick() {
     if (remaining <= 0) {
       etaEl.textContent = "คลื่นสั่นสะเทือนอาจถึงแล้ว — หมอบ-กำบัง-ยึด";
-      clearInterval(quakeCountdownTimer.timer);
+      clearInterval(quakeCountdownTimer);
       return;
     }
     etaEl.textContent = `แรงสั่นอาจถึงในอีก ${remaining} วินาที`;
     remaining -= 1;
   }
   tick();
-  const timer = setInterval(tick, 1000);
-  quakeCountdownTimer = { timer, waveTimer: quakeCountdownTimer?.waveTimer };
+  quakeCountdownTimer = setInterval(tick, 1000);
 }
 
 // -------------------------------------------------------------- จุดปลอดภัย
@@ -222,7 +289,6 @@ async function handleRequestZone() {
     drawRouteTo(currentRecommendation);
 
     // บันทึกคำขอนี้ไว้วิเคราะห์ (กี่คนขอ, ขอจุดไหน, เช็คอินสำเร็จกี่คน, เป็นใคร)
-    // ใช้ doc()+setDoc() แทน addDoc() เพื่อรู้ id ล่วงหน้า จะได้ใช้ id เดียวกันตอนเขียน public_pins ทีหลัง
     const reqRef = doc(collection(db, "safe_requests"));
     await setDoc(reqRef, {
       userId: userProfile?.userId || null,
@@ -248,26 +314,26 @@ async function handleRequestZone() {
 }
 
 function renderZonesOnMap(zones) {
-  zoneMarkers.forEach((m) => map.removeLayer(m));
+  zoneMarkers.forEach((m) => { m.map = null; });
   zoneMarkers.clear();
 
   zones.forEach((z, idx) => {
     const ratio = z.occupancyRatio;
     const cls = ratio > 0.85 ? "full" : ratio > 0.5 ? "mid" : z.category === "help" ? "help" : "ok";
-    const marker = L.marker([z.lat, z.lng], {
-      icon: L.divIcon({
-        className: "",
-        html: `<div class="zone-pin ${cls}"><span>${z.emoji}</span></div>`,
-        iconSize: [26, 26]
-      })
-    })
-      .addTo(map)
-      .bindPopup(
+    const marker = new AdvancedMarkerElement({
+      map,
+      position: { lat: z.lat, lng: z.lng },
+      content: elementFromHTML(`<div class="zone-pin ${cls}"><span>${z.emoji}</span></div>`)
+    });
+    marker.addListener("click", () => {
+      infoWindow.setContent(
         `<b>${idx === 0 ? "⭐ แนะนำ: " : ""}${z.name}</b><br>` +
         `ระยะทาง ${z.distanceKm.toFixed(1)} กม.<br>` +
         `ความจุ ${z.currentCount}/${z.capacity} คน<br>` +
         `🛡️ ความปลอดภัย ${z.safetyPercent}%`
       );
+      infoWindow.open({ anchor: marker, map });
+    });
     zoneMarkers.set(z.id, marker);
   });
 }
@@ -286,50 +352,44 @@ function renderRecommendation(zone) {
 }
 
 async function drawRouteTo(zone) {
-  if (routeLine) map.removeLayer(routeLine);
+  if (routeLine) routeLine.setMap(null);
   try {
     const coords = await fetchWalkingRoute(userLocation.lat, userLocation.lng, zone.lat, zone.lng);
-    routeLine = L.polyline(coords, { color: "#3E7CB1", weight: 4, opacity: 0.85 }).addTo(map);
-    map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
+    const path = coords.map(([lat, lng]) => ({ lat, lng }));
+    routeLine = new google.maps.Polyline({ map, path, strokeColor: "#3E7CB1", strokeWeight: 4, strokeOpacity: 0.85 });
+    fitBoundsToPath(path);
   } catch (e) {
     // fallback: เส้นตรง ถ้า OSRM เรียกไม่สำเร็จ (เช่น ไม่มีเน็ตหรือ rate limit)
-    routeLine = L.polyline(
-      [[userLocation.lat, userLocation.lng], [zone.lat, zone.lng]],
-      { color: "#3E7CB1", weight: 3, dashArray: "6 6" }
-    ).addTo(map);
-    map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
+    const path = [
+      { lat: userLocation.lat, lng: userLocation.lng },
+      { lat: zone.lat, lng: zone.lng }
+    ];
+    routeLine = new google.maps.Polyline({
+      map, path, strokeOpacity: 0, icons: [{
+        icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3, strokeColor: "#3E7CB1" },
+        offset: "0", repeat: "12px"
+      }]
+    });
+    fitBoundsToPath(path);
   }
 }
 
+function fitBoundsToPath(path) {
+  const bounds = new google.maps.LatLngBounds();
+  path.forEach((p) => bounds.extend(p));
+  map.fitBounds(bounds, 40);
+}
+
 // -------------------------------------------------------------- นำทางเรียลไทม์
+// หมายเหตุ: การติดตามตำแหน่ง (watchPosition) ทำงานอยู่ตลอดเวลาแล้วผ่าน startLiveTracking()
+// ฟังก์ชันด้านล่างแค่ "เปิด/ปิดโหมดนำทาง" (เช็คระยะ+แจ้งถึงจุดหมาย) ไม่ต้องเปิด watch ใหม่
 function startNavigation(zone) {
-  if (!navigator.geolocation) {
-    showToast("อุปกรณ์นี้ไม่รองรับ GPS แบบติดตามตำแหน่ง");
-    return;
-  }
   navigating = true;
+  navigationTargetZone = zone;
   document.getElementById("nav-bar").classList.add("show");
   document.getElementById("nav-zone-name").textContent = `🧭 กำลังไป: ${zone.name}`;
   updateNavDistance(zone);
-  showToast("เริ่มนำทางแบบเรียลไทม์แล้ว — แผนที่จะอัปเดตตามตำแหน่งของคุณ");
-
-  if (navWatchId !== null) navigator.geolocation.clearWatch(navWatchId);
-  navWatchId = navigator.geolocation.watchPosition(
-    (pos) => {
-      userLocation.lat = pos.coords.latitude;
-      userLocation.lng = pos.coords.longitude;
-      if (userMarker) userMarker.setLatLng([userLocation.lat, userLocation.lng]);
-
-      updateNavDistance(zone);
-
-      const distM = haversineKm(userLocation.lat, userLocation.lng, zone.lat, zone.lng) * 1000;
-      if (distM <= ARRIVAL_THRESHOLD_M) {
-        triggerArrival(zone);
-      }
-    },
-    (err) => console.warn("watchPosition error:", err),
-    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-  );
+  showToast("เริ่มนำทางแบบเรียลไทม์แล้ว — จุดแดงจะอัปเดตตำแหน่งคุณสด");
 }
 
 function updateNavDistance(zone) {
@@ -342,10 +402,7 @@ function updateNavDistance(zone) {
 
 function stopNavigation() {
   navigating = false;
-  if (navWatchId !== null) {
-    navigator.geolocation.clearWatch(navWatchId);
-    navWatchId = null;
-  }
+  navigationTargetZone = null;
   document.getElementById("nav-bar").classList.remove("show");
 }
 
@@ -379,7 +436,6 @@ async function handleCheckIn() {
       });
     }
     showToast(`✅ เช็คอินที่ ${currentRecommendation.name} สำเร็จ`);
-    // รีเฟรชข้อมูลความจุหลังเช็คอิน เพื่อให้คนถัดไปได้คำแนะนำที่กระจายตัว
     currentRecommendation.currentCount += 1;
     renderRecommendation(currentRecommendation);
   } catch (err) {

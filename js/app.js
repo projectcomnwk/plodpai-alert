@@ -1,6 +1,6 @@
 // ============================================================================
 // app.js — ไฟล์หลักของหน้า index.html
-// เชื่อมแผนที่ (Google Maps) + quake.js + safezone.js + sos.js เข้าด้วยกัน
+// เชื่อมแผนที่ (Leaflet + OpenStreetMap) + quake.js + safezone.js + sos.js เข้าด้วยกัน
 // ============================================================================
 
 import { getUserLocation, showToast, FALLBACK_LOCATION, haversineKm } from "./utils.js";
@@ -12,13 +12,7 @@ import { db, collection, doc, setDoc, updateDoc, serverTimestamp } from "./confi
 import { playSiren, vibrateAlert } from "./sound.js";
 import { ensureProfile, openProfileModal, getProfile } from "./profile.js";
 
-// ต้องสร้าง Map ID ของตัวเองฟรีที่ Google Cloud Console (Maps Management > Map IDs)
-// ถ้ายังไม่ได้สร้าง ใช้ "DEMO_MAP_ID" ทดสอบได้ชั่วคราว (จะมีลายน้ำ "for development purposes only")
-const GOOGLE_MAPS_MAP_ID = "DEMO_MAP_ID";
-
-let map, infoWindow;
-let AdvancedMarkerElement;
-let userMarker, epicenterMarker, epicenterCircle, routeLine, waveTimer;
+let map, userMarker, epicenterCircle, epicenterMarker, routeLine, waveTimer;
 const zoneMarkers = new Map();
 
 let userLocation = null;
@@ -40,46 +34,28 @@ async function main() {
     showToast("ไม่พบสัญญาณ GPS — ใช้ตำแหน่งสำรอง (โรงเรียนหนองหินวิทยาคม)");
   }
 
-  await initMap();
+  initMap();
   startLiveTracking(); // เริ่มติดตามตำแหน่งเป็นจุดแดงแบบเรียลไทม์ทันที (ไม่ต้องรอกดนำทาง)
   initQuakeWatcher(userLocation, onQuakeDetected);
   initReport(() => userLocation);
   wireButtons();
 }
 
-// ---------------------------------------------------------------- แผนที่ (Google Maps)
-async function initMap() {
-  const { Map, InfoWindow } = await google.maps.importLibrary("maps");
-  const markerLib = await google.maps.importLibrary("marker");
-  AdvancedMarkerElement = markerLib.AdvancedMarkerElement;
+// ---------------------------------------------------------------- แผนที่ (Leaflet + OpenStreetMap)
+function initMap() {
+  map = L.map("map", { zoomControl: false }).setView([userLocation.lat, userLocation.lng], 14);
+  L.control.zoom({ position: "bottomright" }).addTo(map);
 
-  map = new Map(document.getElementById("map"), {
-    center: { lat: userLocation.lat, lng: userLocation.lng },
-    zoom: 15,
-    mapId: GOOGLE_MAPS_MAP_ID,
-    disableDefaultUI: false,
-    zoomControl: true,
-    streetViewControl: false,
-    mapTypeControl: false,
-    fullscreenControl: false
-  });
-
-  infoWindow = new InfoWindow();
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "© OpenStreetMap contributors"
+  }).addTo(map);
 
   // จุดแดง = ตำแหน่งของผู้ใช้ อัปเดตแบบเรียลไทม์ผ่าน startLiveTracking()
-  userMarker = new AdvancedMarkerElement({
-    map,
-    position: { lat: userLocation.lat, lng: userLocation.lng },
-    content: elementFromHTML('<div class="live-dot"></div>'),
-    zIndex: 999,
-    title: "ตำแหน่งของคุณ (อัปเดตสด)"
-  });
-}
-
-function elementFromHTML(html) {
-  const div = document.createElement("div");
-  div.innerHTML = html.trim();
-  return div.firstElementChild;
+  userMarker = L.marker([userLocation.lat, userLocation.lng], {
+    icon: L.divIcon({ className: "", html: '<div class="live-dot"></div>', iconSize: [18, 18] }),
+    zIndexOffset: 1000
+  }).addTo(map).bindPopup("ตำแหน่งของคุณ (อัปเดตสด)");
 }
 
 // ---------------------------------------------------------------- ติดตามตำแหน่งจริงตลอดเวลา
@@ -96,7 +72,7 @@ function startLiveTracking() {
       userLocation.lng = pos.coords.longitude;
       userLocation.isFallback = false;
 
-      if (userMarker) userMarker.position = { lat: userLocation.lat, lng: userLocation.lng };
+      if (userMarker) userMarker.setLatLng([userLocation.lat, userLocation.lng]);
 
       // ถ้ากำลังนำทางอยู่ ให้อัปเดตระยะทาง + เช็คว่าถึงจุดหมายหรือยังไปด้วยในตัว
       if (navigating && navigationTargetZone) {
@@ -188,7 +164,7 @@ function onQuakeDetected(quake, etaSeconds) {
   playSiren(4000);
   vibrateAlert();
 
-  drawEpicenter(quake, etaSeconds);
+  drawEpicenter(quake);
   startCountdown(etaSeconds);
 }
 
@@ -212,28 +188,19 @@ document.getElementById("qm-ack").addEventListener("click", () => {
 });
 
 function drawEpicenter(quake) {
-  if (epicenterMarker) epicenterMarker.map = null;
-  if (epicenterCircle) epicenterCircle.setMap(null);
+  if (epicenterMarker) map.removeLayer(epicenterMarker);
+  if (epicenterCircle) map.removeLayer(epicenterCircle);
 
-  epicenterMarker = new AdvancedMarkerElement({
-    map,
-    position: { lat: quake.lat, lng: quake.lng },
-    content: elementFromHTML('<div class="pulse-marker"></div>')
-  });
-  epicenterMarker.addListener("click", () => {
-    infoWindow.setContent(`ศูนย์กลาง: ${quake.place}<br>ขนาด ${quake.magnitude}`);
-    infoWindow.open({ anchor: epicenterMarker, map });
-  });
+  epicenterMarker = L.marker([quake.lat, quake.lng], {
+    icon: L.divIcon({ className: "", html: '<div class="pulse-marker"></div>', iconSize: [16, 16] })
+  }).addTo(map).bindPopup(`ศูนย์กลาง: ${quake.place}<br>ขนาด ${quake.magnitude}`);
 
-  epicenterCircle = new google.maps.Circle({
-    map,
-    center: { lat: quake.lat, lng: quake.lng },
+  epicenterCircle = L.circle([quake.lat, quake.lng], {
     radius: 1000,
-    strokeColor: "#E5484D",
-    strokeWeight: 1,
-    fillColor: "#E5484D",
+    color: "#E5484D",
+    weight: 1,
     fillOpacity: 0.05
-  });
+  }).addTo(map);
 
   // แสดงคลื่นสั่นสะเทือนที่ขยายตัวไปตามเวลาจริง (สื่อฟิสิกส์ของคลื่น S)
   const startTime = Date.now();
@@ -314,26 +281,26 @@ async function handleRequestZone() {
 }
 
 function renderZonesOnMap(zones) {
-  zoneMarkers.forEach((m) => { m.map = null; });
+  zoneMarkers.forEach((m) => map.removeLayer(m));
   zoneMarkers.clear();
 
   zones.forEach((z, idx) => {
     const ratio = z.occupancyRatio;
     const cls = ratio > 0.85 ? "full" : ratio > 0.5 ? "mid" : z.category === "help" ? "help" : "ok";
-    const marker = new AdvancedMarkerElement({
-      map,
-      position: { lat: z.lat, lng: z.lng },
-      content: elementFromHTML(`<div class="zone-pin ${cls}"><span>${z.emoji}</span></div>`)
-    });
-    marker.addListener("click", () => {
-      infoWindow.setContent(
+    const marker = L.marker([z.lat, z.lng], {
+      icon: L.divIcon({
+        className: "",
+        html: `<div class="zone-pin ${cls}"><span>${z.emoji}</span></div>`,
+        iconSize: [26, 26]
+      })
+    })
+      .addTo(map)
+      .bindPopup(
         `<b>${idx === 0 ? "⭐ แนะนำ: " : ""}${z.name}</b><br>` +
         `ระยะทาง ${z.distanceKm.toFixed(1)} กม.<br>` +
         `ความจุ ${z.currentCount}/${z.capacity} คน<br>` +
         `🛡️ ความปลอดภัย ${z.safetyPercent}%`
       );
-      infoWindow.open({ anchor: marker, map });
-    });
     zoneMarkers.set(z.id, marker);
   });
 }
@@ -352,32 +319,19 @@ function renderRecommendation(zone) {
 }
 
 async function drawRouteTo(zone) {
-  if (routeLine) routeLine.setMap(null);
+  if (routeLine) map.removeLayer(routeLine);
   try {
     const coords = await fetchWalkingRoute(userLocation.lat, userLocation.lng, zone.lat, zone.lng);
-    const path = coords.map(([lat, lng]) => ({ lat, lng }));
-    routeLine = new google.maps.Polyline({ map, path, strokeColor: "#3E7CB1", strokeWeight: 4, strokeOpacity: 0.85 });
-    fitBoundsToPath(path);
+    routeLine = L.polyline(coords, { color: "#3E7CB1", weight: 4, opacity: 0.85 }).addTo(map);
+    map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
   } catch (e) {
     // fallback: เส้นตรง ถ้า OSRM เรียกไม่สำเร็จ (เช่น ไม่มีเน็ตหรือ rate limit)
-    const path = [
-      { lat: userLocation.lat, lng: userLocation.lng },
-      { lat: zone.lat, lng: zone.lng }
-    ];
-    routeLine = new google.maps.Polyline({
-      map, path, strokeOpacity: 0, icons: [{
-        icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3, strokeColor: "#3E7CB1" },
-        offset: "0", repeat: "12px"
-      }]
-    });
-    fitBoundsToPath(path);
+    routeLine = L.polyline(
+      [[userLocation.lat, userLocation.lng], [zone.lat, zone.lng]],
+      { color: "#3E7CB1", weight: 3, dashArray: "6 6" }
+    ).addTo(map);
+    map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
   }
-}
-
-function fitBoundsToPath(path) {
-  const bounds = new google.maps.LatLngBounds();
-  path.forEach((p) => bounds.extend(p));
-  map.fitBounds(bounds, 40);
 }
 
 // -------------------------------------------------------------- นำทางเรียลไทม์

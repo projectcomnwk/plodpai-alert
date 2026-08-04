@@ -11,11 +11,15 @@
 import { haversineKm } from "./utils.js";
 import { db, doc, getDoc, setDoc, runTransaction } from "./config.js";
 
-// เรียงตามลำดับที่จะลอง — ตัวแรกคือเซิร์ฟเวอร์หลัก ที่เหลือเป็นตัวสำรอง (mirror ฟรีทั้งหมด)
+// เรียงตามลำดับที่จะลอง — ตัวแรกคือเซิร์ฟเวอร์หลัก (ยืนยันแล้วว่ารองรับ CORS ดี เว็บส่วนใหญ่ใช้ตัวนี้)
+// ตัวที่ 2-3 เป็น subdomain ของผู้ดูแลเดียวกัน (z / lz4) ที่ overpass-api.de ปกติ round-robin ไปหาอยู่แล้ว
+// เผื่อไว้กรณี DNS/เส้นทางที่ overpass-api.de ชี้ไปมีปัญหาเฉพาะจุด
+// ตัวสุดท้าย (kumi.systems) เป็นผู้ดูแลคนละคนจริงๆ ไว้เป็นทางเลือกสุดท้ายถ้า 3 ตัวแรกล่มพร้อมกันหมด
 const OVERPASS_SERVERS = [
   "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://overpass.openstreetmap.ru/api/interpreter"
+  "https://lz4.overpass-api.de/api/interpreter",
+  "https://z.overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter"
 ];
 
 const OVERPASS_TIMEOUT_MS = 12000; // รอเซิร์ฟเวอร์แต่ละตัวไม่เกิน 12 วินาที ก่อนลองตัวถัดไป

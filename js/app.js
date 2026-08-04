@@ -272,8 +272,10 @@ async function handleRequestZone() {
 
     document.getElementById("btn-checkin").disabled = false;
   } catch (err) {
+    // เปลี่ยนจากข้อความทั่วไป เป็นการโชว์ "สาเหตุจริง" ที่โยนมาจาก safezone.js
+    // เพื่อให้แก้ปัญหาได้จากหน้าจอเลย ไม่ต้องเปิด Developer Console ก็เห็นสาเหตุ
     console.error(err);
-    showToast("ดึงข้อมูลจุดปลอดภัยไม่สำเร็จ ลองใหม่อีกครั้ง");
+    showToast(`ดึงข้อมูลจุดปลอดภัยไม่สำเร็จ: ${err.message || "ไม่ทราบสาเหตุ"}`, 5000);
   } finally {
     btn.disabled = false;
     label.textContent = originalLabel;
@@ -394,7 +396,7 @@ async function handleCheckIn() {
     renderRecommendation(currentRecommendation);
   } catch (err) {
     console.error(err);
-    showToast("เช็คอินไม่สำเร็จ ลองใหม่อีกครั้ง");
+    showToast(`เช็คอินไม่สำเร็จ: ${err.message || "ลองใหม่อีกครั้ง"}`);
     btn.disabled = false;
   }
 }

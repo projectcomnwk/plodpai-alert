@@ -1,12 +1,24 @@
 // ============================================================================
 // safezone.js — ดึงจุดปลอดภัยจาก OpenStreetMap (Overpass API)
 // แล้วคำนวณ "คะแนนแนะนำ" ให้แต่ละจุด เพื่อกระจายคนไม่ให้กองจุดเดียว (Smart Routing)
+//
+// อัปเดต: เพิ่มระบบ "เซิร์ฟเวอร์สำรอง" (fallback) เพราะ overpass-api.de เป็นเซิร์ฟเวอร์
+// สาธารณะฟรีที่บางครั้งไม่เสถียร (มีรายงานปัญหา error 406 / ปฏิเสธ request เป็นช่วงๆ)
+// ถ้าเซิร์ฟเวอร์หลักไม่ตอบภายในเวลาที่กำหนด หรือตอบ error ระบบจะลองเซิร์ฟเวอร์ถัดไปอัตโนมัติ
+// แทนที่จะค้างที่ "กำลังค้นหา..." ตลอดไปเหมือนก่อนหน้านี้
 // ============================================================================
 
 import { haversineKm } from "./utils.js";
 import { db, doc, getDoc, setDoc, runTransaction } from "./config.js";
 
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+// เรียงตามลำดับที่จะลอง — ตัวแรกคือเซิร์ฟเวอร์หลัก ที่เหลือเป็นตัวสำรอง (mirror ฟรีทั้งหมด)
+const OVERPASS_SERVERS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.openstreetmap.ru/api/interpreter"
+];
+
+const OVERPASS_TIMEOUT_MS = 12000; // รอเซิร์ฟเวอร์แต่ละตัวไม่เกิน 12 วินาที ก่อนลองตัวถัดไป
 const SEARCH_RADIUS_M = 5000; // ค้นหาในรัศมี 5 กม. รอบตำแหน่งผู้ใช้
 
 // ค่าเริ่มต้นของแต่ละประเภทสถานที่: ความจุโดยประมาณ + คะแนนความเหมาะสมของประเภท (0-1)
@@ -54,12 +66,50 @@ function classify(tags) {
   return null;
 }
 
+/**
+ * ยิง query ไปยังเซิร์ฟเวอร์ Overpass ทีละตัวตามลำดับใน OVERPASS_SERVERS
+ * ถ้าตัวไหนไม่ตอบภายในเวลาที่กำหนด หรือตอบ error จะข้ามไปลองตัวถัดไปทันที
+ * โยน error ก็ต่อเมื่อ "ทุกเซิร์ฟเวอร์" ใช้ไม่ได้จริงๆ เท่านั้น
+ */
+async function fetchFromOverpass(query) {
+  let lastError = null;
+
+  for (const url of OVERPASS_SERVERS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        body: query,
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        throw new Error(`เซิร์ฟเวอร์ตอบกลับผิดพลาด (HTTP ${res.status})`);
+      }
+      return await res.json(); // สำเร็จ — จบการทำงานทันที ไม่ต้องลองเซิร์ฟเวอร์ถัดไป
+    } catch (err) {
+      clearTimeout(timer);
+      const reason = err.name === "AbortError" ? "หมดเวลารอ (เกิน 12 วินาที)" : err.message;
+      console.warn(`⚠️ เซิร์ฟเวอร์ Overpass ไม่ตอบ: ${url} (${reason}) — ลองเซิร์ฟเวอร์ถัดไป...`);
+      lastError = err;
+      // ไม่ throw ตรงนี้ — ปล่อยให้ loop ไปลอง url ถัดไปต่อ
+    }
+  }
+
+  // มาถึงตรงนี้แปลว่าลองครบทุกเซิร์ฟเวอร์แล้วไม่มีตัวไหนตอบสำเร็จเลย
+  throw new Error(
+    "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ข้อมูลแผนที่ได้ในขณะนี้ (ลองแล้ว " +
+    OVERPASS_SERVERS.length + " เซิร์ฟเวอร์) กรุณาลองใหม่อีกครั้งในอีกสักครู่"
+  );
+}
+
 /** ดึงจุดปลอดภัยรอบตำแหน่งผู้ใช้ พร้อมอ่านความจุปัจจุบันจาก Firestore (zone_state) */
 export async function fetchNearbySafeZones(lat, lng) {
   const query = buildOverpassQuery(lat, lng);
-  const res = await fetch(OVERPASS_URL, { method: "POST", body: query });
-  if (!res.ok) throw new Error("Overpass API error");
-  const data = await res.json();
+  const data = await fetchFromOverpass(query);
 
   const zones = [];
   for (const el of data.elements) {

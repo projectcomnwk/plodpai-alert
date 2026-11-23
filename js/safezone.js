@@ -8,8 +8,9 @@
 // แทนที่จะค้างที่ "กำลังค้นหา..." ตลอดไปเหมือนก่อนหน้านี้
 // ============================================================================
 
-import { haversineKm } from "./utils.js";
+import { haversineKm, showToast } from "./utils.js";
 import { db, doc, getDoc, setDoc, runTransaction } from "./config.js";
+import { FALLBACK_ZONES } from "./fallback_zones.js";
 
 // เรียงตามลำดับที่จะลอง — ตัวแรกคือเซิร์ฟเวอร์หลัก (ยืนยันแล้วว่ารองรับ CORS ดี เว็บส่วนใหญ่ใช้ตัวนี้)
 // ตัวที่ 2-3 เป็น subdomain ของผู้ดูแลเดียวกัน (z / lz4) ที่ overpass-api.de ปกติ round-robin ไปหาอยู่แล้ว
@@ -22,7 +23,7 @@ const OVERPASS_SERVERS = [
   "https://overpass.kumi.systems/api/interpreter"
 ];
 
-const OVERPASS_TIMEOUT_MS = 12000; // รอเซิร์ฟเวอร์แต่ละตัวไม่เกิน 12 วินาที ก่อนลองตัวถัดไป
+const OVERPASS_TIMEOUT_MS = 8000; // รอเซิร์ฟเวอร์แต่ละตัวไม่เกิน 8 วินาที ก่อนลองตัวถัดไป
 const SEARCH_RADIUS_M = 5000; // ค้นหาในรัศมี 5 กม. รอบตำแหน่งผู้ใช้
 
 // ค่าเริ่มต้นของแต่ละประเภทสถานที่: ความจุโดยประมาณ + คะแนนความเหมาะสมของประเภท (0-1)
@@ -96,7 +97,7 @@ async function fetchFromOverpass(query) {
       return await res.json(); // สำเร็จ — จบการทำงานทันที ไม่ต้องลองเซิร์ฟเวอร์ถัดไป
     } catch (err) {
       clearTimeout(timer);
-      const reason = err.name === "AbortError" ? "หมดเวลารอ (เกิน 12 วินาที)" : err.message;
+      const reason = err.name === "AbortError" ? "หมดเวลารอ (เกิน 8 วินาที)" : err.message;
       console.warn(`⚠️ เซิร์ฟเวอร์ Overpass ไม่ตอบ: ${url} (${reason}) — ลองเซิร์ฟเวอร์ถัดไป...`);
       lastError = err;
       // ไม่ throw ตรงนี้ — ปล่อยให้ loop ไปลอง url ถัดไปต่อ
@@ -110,11 +111,48 @@ async function fetchFromOverpass(query) {
   );
 }
 
-/** ดึงจุดปลอดภัยรอบตำแหน่งผู้ใช้ พร้อมอ่านความจุปัจจุบันจาก Firestore (zone_state) */
-export async function fetchNearbySafeZones(lat, lng) {
-  const query = buildOverpassQuery(lat, lng);
-  const data = await fetchFromOverpass(query);
+// ---------------------------------------------------------------------------
+// ระบบสำรอง 3 ชั้น เมื่อ Overpass ใช้ไม่ได้ (เน็ตช้า/เซิร์ฟเวอร์ล่ม):
+//   1) ข้อมูลสด จาก Overpass            (ปกติ)
+//   2) แคชในเครื่อง ผลล่าสุดที่เคยโหลดสำเร็จ (เก็บใน localStorage นาน 30 วัน)
+//   3) รายการสำรองที่ฝังในแอป            (ไฟล์ fallback_zones.js)
+// ถ้าทั้ง 3 ชั้นไม่มีจุดในรัศมี ค่อยแจ้ง error
+// ---------------------------------------------------------------------------
+const CACHE_KEY = "plodpai_zone_cache_v1";
+const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const CACHE_MAX_SHIFT_KM = 3; // ใช้แคชได้ถ้าผู้ใช้อยู่ห่างจากจุดที่เคยโหลดไม่เกิน 3 กม.
 
+function saveZoneCache(lat, lng, zones) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({
+      lat, lng, savedAt: Date.now(),
+      zones: zones.map((z) => ({
+        id: z.id, name: z.name, lat: z.lat, lng: z.lng,
+        capacity: z.capacity, typeScore: z.typeScore, category: z.category, emoji: z.emoji
+      }))
+    }));
+  } catch (e) { /* โหมดส่วนตัว/พื้นที่เต็ม — ข้ามไปได้ */ }
+}
+
+function loadZoneCache(lat, lng) {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw);
+    if (Date.now() - c.savedAt > CACHE_MAX_AGE_MS) return null;
+    if (haversineKm(lat, lng, c.lat, c.lng) > CACHE_MAX_SHIFT_KM) return null;
+    return c.zones;
+  } catch (e) { return null; }
+}
+
+/** คำนวณระยะทางใหม่จากตำแหน่งผู้ใช้ และเก็บเฉพาะจุดที่อยู่ในรัศมีค้นหา */
+function withDistance(list, lat, lng) {
+  return list
+    .map((z) => ({ ...z, distanceKm: haversineKm(lat, lng, z.lat, z.lng) }))
+    .filter((z) => z.distanceKm <= SEARCH_RADIUS_M / 1000);
+}
+
+function parseOverpass(data, lat, lng) {
   const zones = [];
   for (const el of data.elements) {
     const info = classify(el.tags || {});
@@ -124,28 +162,62 @@ export async function fetchNearbySafeZones(lat, lng) {
     const zLng = el.type === "node" ? el.lon : el.center?.lon;
     if (!zLat || !zLng) continue;
 
-    const id = `${el.type}-${el.id}`;
-    const name = el.tags.name || info.label;
-    const distanceKm = haversineKm(lat, lng, zLat, zLng);
-
     zones.push({
-      id, name, lat: zLat, lng: zLng,
-      distanceKm,
+      id: `${el.type}-${el.id}`,
+      name: el.tags.name || info.label,
+      lat: zLat, lng: zLng,
+      distanceKm: haversineKm(lat, lng, zLat, zLng),
       capacity: info.capacity,
       typeScore: info.typeScore,
       category: info.category,
       emoji: info.emoji
     });
   }
+  return zones;
+}
+
+/** ดึงจุดปลอดภัยรอบตำแหน่งผู้ใช้ พร้อมอ่านความจุปัจจุบันจาก Firestore (zone_state) */
+export async function fetchNearbySafeZones(lat, lng) {
+  let zones = [];
+  let source = "live";
+
+  try {
+    const data = await fetchFromOverpass(buildOverpassQuery(lat, lng));
+    zones = parseOverpass(data, lat, lng);
+    if (zones.length) saveZoneCache(lat, lng, zones);
+  } catch (err) {
+    // Overpass ใช้ไม่ได้ → ลองแคชในเครื่อง แล้วค่อยลองรายการสำรองที่ฝังในแอป
+    const cached = loadZoneCache(lat, lng);
+    zones = cached ? withDistance(cached, lat, lng) : [];
+    source = "cache";
+    if (!zones.length) {
+      zones = withDistance(FALLBACK_ZONES, lat, lng);
+      source = "fallback";
+    }
+    if (!zones.length) throw err; // ไม่มีข้อมูลสำรองเลย → แจ้งสาเหตุเดิม
+    console.warn(`⚠️ ใช้ข้อมูลสำรอง (${source}) เพราะ Overpass ใช้ไม่ได้:`, err.message);
+    showToast(
+      source === "cache"
+        ? "เซิร์ฟเวอร์แผนที่ไม่ตอบ — ใช้จุดปลอดภัยที่บันทึกไว้ในเครื่อง"
+        : "เซิร์ฟเวอร์แผนที่ไม่ตอบ — ใช้รายการจุดปลอดภัยสำรองของแอป",
+      5000
+    );
+  }
 
   // อ่านจำนวนคนที่เช็คอินไปแล้วของแต่ละจุด (ถ้ามี) จาก Firestore แบบขนาน
+  // ถ้าอ่านไม่ได้ (เช่น ออฟไลน์) ให้ถือว่ายังไม่มีคนเช็คอิน แทนที่จะล้มทั้งหมด
   await Promise.all(
     zones.map(async (z) => {
-      const snap = await getDoc(doc(db, "zone_state", z.id));
-      z.currentCount = snap.exists() ? snap.data().currentCount || 0 : 0;
+      try {
+        const snap = await getDoc(doc(db, "zone_state", z.id));
+        z.currentCount = snap.exists() ? snap.data().currentCount || 0 : 0;
+      } catch (e) {
+        z.currentCount = 0;
+      }
     })
   );
 
+  zones.source = source;
   return zones;
 }
 
